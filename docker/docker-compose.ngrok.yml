@@ -1,0 +1,8 @@
+# Override for local dev + ngrok
+services:
+  api:
+    environment:
+      ALLOWED_ORIGIN: "*"
+  api2:
+    environment:
+      ALLOWED_ORIGIN: "*"

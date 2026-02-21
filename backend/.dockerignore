@@ -1,0 +1,8 @@
+.git
+.gopath
+.gocache
+dist
+node_modules
+tmp
+coverage
+*.log

@@ -1,0 +1,20 @@
+﻿{
+    "VUs":  1500,
+    "AvgLatencyMs":  4.96,
+    "P95LatencyMs":  18,
+    "P99LatencyMs":  27,
+    "ErrorRatePercent":  0.207,
+    "ReconnectRatePercent":  50,
+    "RedisOpsPerSec":  162.85,
+    "WsActiveConnectionsPeak":  121,
+    "ActiveMatchesPeak":  46,
+    "PeakGcPause95Ms":  0,
+    "PeakGcPause99Ms":  0,
+    "RedisMemoryPeakMiB":  7.35,
+    "ApiCpuPeakPercent":  269.2,
+    "ApiMemPeakMiB":  45.57,
+    "PostgresCpuPeakPercent":  10.52,
+    "PostgresMemPeakMiB":  46.66,
+    "RedisCpuPeakPercent":  99.49,
+    "RedisContainerMemPeakMiB":  10.04
+}

@@ -1,0 +1,166 @@
+﻿File: durak-api
+Build ID: e6aba7255495284a2883fcbc6368ad31f408d540
+Type: cpu
+Time: 2026-02-19 17:38:10 MSK
+Duration: 25s, Total samples = 37.69s (150.76%)
+Showing nodes accounting for 31.52s, 83.63% of 37.69s total
+Dropped 534 nodes (cum <= 0.19s)
+      flat  flat%   sum%        cum   cum%
+    14.44s 38.31% 38.31%     14.44s 38.31%  internal/runtime/syscall/linux.Syscall6
+    10.44s 27.70% 66.01%     10.44s 27.70%  runtime.futex
+     0.54s  1.43% 67.44%      1.21s  3.21%  runtime.stealWork
+     0.45s  1.19% 68.64%      0.45s  1.19%  runtime.osyield
+     0.29s  0.77% 69.41%      0.29s  0.77%  runtime.nextFreeFast (inline)
+     0.28s  0.74% 70.15%      0.28s  0.74%  runtime.memmove
+     0.22s  0.58% 70.73%      0.22s  0.58%  runtime.nanotime (inline)
+     0.21s  0.56% 71.29%     12.70s 33.70%  runtime.findRunnable
+     0.19s   0.5% 71.80%      0.20s  0.53%  runtime.(*timers).wakeTime (inline)
+     0.18s  0.48% 72.27%      0.33s  0.88%  runtime.chanrecv
+     0.15s   0.4% 72.67%      0.23s  0.61%  runtime.runqgrab
+     0.14s  0.37% 73.04%      1.29s  3.42%  encoding/json.(*decodeState).object
+     0.14s  0.37% 73.41%      1.35s  3.58%  runtime.lock2
+     0.14s  0.37% 73.79%      3.53s  9.37%  runtime.unlock2
+     0.13s  0.34% 74.13%      0.33s  0.88%  internal/poll.runtime_pollSetDeadline
+     0.12s  0.32% 74.45%      0.23s  0.61%  runtime.casgstatus
+     0.11s  0.29% 74.74%        11s 29.19%  internal/poll.(*FD).Write
+     0.10s  0.27% 75.01%      0.68s  1.80%  runtime.mallocgcSmallScanNoHeader
+     0.09s  0.24% 75.25%      3.70s  9.82%  bufio.(*Reader).fill
+     0.09s  0.24% 75.48%      0.25s  0.66%  encoding/json.checkValid
+     0.09s  0.24% 75.72%      1.21s  3.21%  github.com/redis/go-redis/v9/internal/pool.connCheck
+     0.09s  0.24% 75.96%      0.39s  1.03%  runtime.(*timers).check
+     0.09s  0.24% 76.20%      1.16s  3.08%  runtime.notesleep
+     0.09s  0.24% 76.44%     13.59s 36.06%  syscall.RawSyscall6
+     0.08s  0.21% 76.65%      0.84s  2.23%  runtime.reentersyscall
+     0.08s  0.21% 76.86%     13.87s 36.80%  runtime.schedule
+     0.07s  0.19% 77.05%      0.97s  2.57%  runtime.chansend
+     0.07s  0.19% 77.24%      1.04s  2.76%  runtime.mallocgc
+     0.07s  0.19% 77.42%     14.15s 37.54%  runtime.mcall
+     0.06s  0.16% 77.58%      3.75s  9.95%  bufio.(*Reader).Peek
+     0.06s  0.16% 77.74%      1.99s  5.28%  github.com/gorilla/websocket.(*Conn).NextReader
+     0.06s  0.16% 77.90%      6.97s 18.49%  github.com/gorilla/websocket.(*Conn).WriteMessage
+     0.06s  0.16% 78.06%      1.79s  4.75%  github.com/gorilla/websocket.(*Conn).read
+     0.06s  0.16% 78.22%      9.45s 25.07%  github.com/redis/go-redis/v9.(*baseClient).withConn
+     0.06s  0.16% 78.38%      1.08s  2.87%  runtime.netpoll
+     0.06s  0.16% 78.54%      0.49s  1.30%  runtime.newobject
+     0.05s  0.13% 78.67%      6.83s 18.12%  github.com/gorilla/websocket.(*messageWriter).flushFrame
+     0.05s  0.13% 78.80%      9.53s 25.29%  github.com/redis/go-redis/v9.(*hooksMixin).processHook (inline)
+     0.05s  0.13% 78.93%      0.30s   0.8%  github.com/redis/go-redis/v9/internal/proto.(*Writer).WriteArg
+     0.05s  0.13% 79.07%      1.77s  4.70%  runtime.futexsleep
+     0.05s  0.13% 79.20%      0.23s  0.61%  runtime.mallocgcSmallNoscan
+     0.05s  0.13% 79.33%      3.37s  8.94%  runtime.unlock2Wake
+     0.04s  0.11% 79.44%      9.59s 25.44%  durakonline/backend/internal/ratelimit.(*Service).Allow
+     0.04s  0.11% 79.54%      0.45s  1.19%  encoding/json.(*decodeState).literalStore
+     0.04s  0.11% 79.65%      0.38s  1.01%  encoding/json.structEncoder.encode
+     0.04s  0.11% 79.76%      1.84s  4.88%  github.com/gorilla/websocket.(*Conn).advanceFrame
+     0.04s  0.11% 79.86%      9.37s 24.86%  github.com/redis/go-redis/v9.(*Script).EvalSha (inline)
+     0.04s  0.11% 79.97%      2.24s  5.94%  github.com/redis/go-redis/v9.(*baseClient)._process.func1.2
+     0.04s  0.11% 80.07%      3.52s  9.34%  internal/poll.(*FD).Read
+     0.04s  0.11% 80.18%     11.06s 29.34%  net.(*conn).Write
+     0.04s  0.11% 80.29%      4.57s 12.13%  runtime.injectglist
+     0.04s  0.11% 80.39%     14.04s 37.25%  runtime.park_m
+     0.04s  0.11% 80.50%      0.77s  2.04%  runtime.ready
+     0.04s  0.11% 80.60%      0.75s  1.99%  syscall.Recvfrom
+     0.03s  0.08% 80.68%      7.34s 19.47%  durakonline/backend/internal/ws.(*Client).writePump
+     0.03s  0.08% 80.76%     14.92s 39.59%  durakonline/backend/internal/ws.(*Handler).ServeWS
+     0.03s  0.08% 80.84%      0.43s  1.14%  encoding/json.(*encodeState).reflectValue
+     0.03s  0.08% 80.92%      0.20s  0.53%  encoding/json.indirect
+     0.03s  0.08% 81.00%      7.93s 21.04%  github.com/redis/go-redis/v9.(*baseClient)._process.func1
+     0.03s  0.08% 81.08%      0.88s  2.33%  github.com/redis/go-redis/v9.(*baseClient).getConn
+     0.03s  0.08% 81.16%      2.02s  5.36%  github.com/redis/go-redis/v9.(*baseClient).processPendingPushNotificationWithReader
+     0.03s  0.08% 81.24%      0.89s  2.36%  net.(*rawConn).Read
+     0.03s  0.08% 81.32%      8.75s 23.22%  runtime.futexwakeup
+     0.03s  0.08% 81.40%      5.49s 14.57%  runtime.notewakeup
+     0.03s  0.08% 81.48%      0.26s  0.69%  runtime.runqsteal
+     0.03s  0.08% 81.56%      1.47s  3.90%  runtime.stopm
+     0.03s  0.08% 81.64%     13.96s 37.04%  syscall.Syscall
+     0.03s  0.08% 81.72%      3.21s  8.52%  syscall.read
+     0.03s  0.08% 81.80%      0.71s  1.88%  syscall.recvfrom
+     0.03s  0.08% 81.88%     10.81s 28.68%  syscall.write
+     0.02s 0.053% 81.93%      4.57s 12.13%  bufio.(*Writer).Flush
+     0.02s 0.053% 81.98%      6.78s 17.99%  github.com/gorilla/websocket.(*Conn).write
+     0.02s 0.053% 82.04%      9.55s 25.34%  github.com/redis/go-redis/v9.(*Client).Process
+     0.02s 0.053% 82.09%      9.48s 25.15%  github.com/redis/go-redis/v9.(*baseClient).process
+     0.02s 0.053% 82.14%      0.68s  1.80%  github.com/redis/go-redis/v9.(*baseClient).processPushNotifications
+     0.02s 0.053% 82.20%      2.53s  6.71%  github.com/redis/go-redis/v9/internal/pool.(*Conn).WithReader
+     0.02s 0.053% 82.25%      0.83s  2.20%  github.com/redis/go-redis/v9/internal/pool.(*ConnPool).getConn
+     0.02s 0.053% 82.30%      0.64s  1.70%  github.com/redis/go-redis/v9/internal/pool.maybeHasData (inline)
+     0.02s 0.053% 82.36%      0.96s  2.55%  internal/runtime/syscall/linux.EpollWait
+     0.02s 0.053% 82.41%      3.57s  9.47%  net.(*netFD).Read
+     0.02s 0.053% 82.46%      0.19s   0.5%  runtime.growslice
+     0.02s 0.053% 82.52%      4.15s 11.01%  runtime.injectglist.func1
+     0.02s 0.053% 82.57%      1.18s  3.13%  runtime.mPark (inline)
+     0.02s 0.053% 82.62%      0.21s  0.56%  runtime.makeslice
+     0.02s 0.053% 82.67%      0.92s  2.44%  runtime.selectnbsend
+     0.02s 0.053% 82.73%      1.84s  4.88%  runtime.systemstack
+     0.02s 0.053% 82.78%      1.96s  5.20%  runtime.wakep
+     0.02s 0.053% 82.83%      3.23s  8.57%  syscall.Read (inline)
+     0.01s 0.027% 82.86%      0.56s  1.49%  durakonline/backend/internal/games.(*Service).GetState
+     0.01s 0.027% 82.89%     11.35s 30.11%  durakonline/backend/internal/ws.(*Handler).handleClientEvent
+     0.01s 0.027% 82.91%      1.47s  3.90%  durakonline/backend/internal/ws.(*Hub).Send
+     0.01s 0.027% 82.94%      1.30s  3.45%  encoding/json.(*decodeState).value
+     0.01s 0.027% 82.97%      0.46s  1.22%  encoding/json.(*encodeState).marshal
+     0.01s 0.027% 82.99%      0.58s  1.54%  encoding/json.Marshal
+     0.01s 0.027% 83.02%      1.58s  4.19%  encoding/json.Unmarshal
+     0.01s 0.027% 83.05%      2.17s  5.76%  github.com/gorilla/websocket.(*Conn).ReadMessage
+     0.01s 0.027% 83.07%      0.85s  2.26%  github.com/redis/go-redis/v9.(*baseClient)._getConn
+     0.01s 0.027% 83.10%      9.46s 25.10%  github.com/redis/go-redis/v9.(*baseClient)._process
+     0.01s 0.027% 83.13%      0.39s  1.03%  github.com/redis/go-redis/v9.(*baseClient)._process.func1.1
+     0.01s 0.027% 83.15%      0.58s  1.54%  github.com/redis/go-redis/v9.(*baseClient).releaseConn
+     0.01s 0.027% 83.18%      9.33s 24.75%  github.com/redis/go-redis/v9.cmdable.EvalSha
+     0.01s 0.027% 83.21%      9.33s 24.75%  github.com/redis/go-redis/v9.cmdable.eval
+     0.01s 0.027% 83.23%      0.38s  1.01%  github.com/redis/go-redis/v9.writeCmd
+     0.01s 0.027% 83.26%      0.66s  1.75%  github.com/redis/go-redis/v9/internal/pool.(*Conn).MaybeHasData
+     0.01s 0.027% 83.28%      5.15s 13.66%  github.com/redis/go-redis/v9/internal/pool.(*Conn).WithWriter
+     0.01s 0.027% 83.31%      0.68s  1.80%  github.com/redis/go-redis/v9/internal/pool.(*ConnPool).isHealthyConn
+     0.01s 0.027% 83.34%      0.82s  2.18%  github.com/redis/go-redis/v9/internal/pool.connCheck.func1
+     0.01s 0.027% 83.36%      2.05s  5.44%  github.com/redis/go-redis/v9/internal/proto.(*Reader).PeekReplyType
+     0.01s 0.027% 83.39%      0.36s  0.96%  github.com/redis/go-redis/v9/internal/proto.(*Writer).WriteArgs
+     0.01s 0.027% 83.42%      2.06s  5.47%  github.com/redis/go-redis/v9/push.(*Processor).ProcessPendingNotifications
+     0.01s 0.027% 83.44%      0.86s  2.28%  internal/poll.(*FD).RawRead
+     0.01s 0.027% 83.47%      0.39s  1.03%  internal/poll.setDeadlineImpl
+     0.01s 0.027% 83.50%      3.58s  9.50%  net.(*conn).Read
+     0.01s 0.027% 83.52%     11.02s 29.24%  net.(*netFD).Write
+     0.01s 0.027% 83.55%      0.89s  2.36%  runtime.entersyscall
+     0.01s 0.027% 83.58%      0.95s  2.52%  runtime.resetspinning
+     0.01s 0.027% 83.60%      0.70s  1.86%  runtime.semasleep
+     0.01s 0.027% 83.63%      3.30s  8.76%  runtime.semawakeup (inline)
+         0     0% 83.63%      0.28s  0.74%  durakonline/backend/internal/games.(*Service).HandleTimeouts
+         0     0% 83.63%      0.68s  1.80%  durakonline/backend/internal/scheduler.RunMatchTimers
+         0     0% 83.63%      0.90s  2.39%  durakonline/backend/internal/ws.(*Client).enqueue (inline)
+         0     0% 83.63%      1.57s  4.17%  durakonline/backend/internal/ws.(*Handler).sendRoomError (inline)
+         0     0% 83.63%     14.97s 39.72%  durakonline/backend/pkg/metrics.HTTPMiddleware.func1
+         0     0% 83.63%      0.22s  0.58%  encoding/json.(*decodeState).array
+         0     0% 83.63%      1.30s  3.45%  encoding/json.(*decodeState).unmarshal
+         0     0% 83.63%      0.25s  0.66%  encoding/json.interfaceEncoder
+         0     0% 83.63%     14.97s 39.72%  github.com/go-chi/chi/v5.(*Mux).ServeHTTP
+         0     0% 83.63%     14.97s 39.72%  github.com/go-chi/chi/v5.(*Mux).routeHTTP
+         0     0% 83.63%     14.97s 39.72%  github.com/go-chi/chi/v5/middleware.RealIP.func1
+         0     0% 83.63%     14.97s 39.72%  github.com/go-chi/chi/v5/middleware.Recoverer.func1
+         0     0% 83.63%     14.97s 39.72%  github.com/go-chi/chi/v5/middleware.RequestID.func1
+         0     0% 83.63%      9.39s 24.91%  github.com/redis/go-redis/v9.(*Script).Run
+         0     0% 83.63%      0.58s  1.54%  github.com/redis/go-redis/v9.(*baseClient).withConn.func1
+         0     0% 83.63%      0.39s  1.03%  github.com/redis/go-redis/v9.cmdable.Get (inline)
+         0     0% 83.63%      0.83s  2.20%  github.com/redis/go-redis/v9/internal/pool.(*ConnPool).Get
+         0     0% 83.63%      0.19s   0.5%  internal/poll.(*pollDesc).wait
+         0     0% 83.63%      0.19s   0.5%  internal/poll.(*pollDesc).waitRead (inline)
+         0     0% 83.63%     14.05s 37.28%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 83.63%     14.97s 39.72%  main.jsonContentType.func1
+         0     0% 83.63%     14.97s 39.72%  main.main.cors.func8.1
+         0     0% 83.63%     14.99s 39.77%  net/http.(*conn).serve
+         0     0% 83.63%     14.97s 39.72%  net/http.HandlerFunc.ServeHTTP
+         0     0% 83.63%     14.97s 39.72%  net/http.serverHandler.ServeHTTP
+         0     0% 83.63%      0.20s  0.53%  runtime.chanrecv2
+         0     0% 83.63%      0.69s  1.83%  runtime.entersyscallWakeSysmon
+         0     0% 83.63%      0.27s  0.72%  runtime.gcBgMarkWorker
+         0     0% 83.63%      0.23s  0.61%  runtime.gcBgMarkWorker.func2
+         0     0% 83.63%      0.23s  0.61%  runtime.gcDrain
+         0     0% 83.63%      0.77s  2.04%  runtime.goready (inline)
+         0     0% 83.63%      1.35s  3.58%  runtime.lock (inline)
+         0     0% 83.63%      1.35s  3.58%  runtime.lockWithRank (inline)
+         0     0% 83.63%      0.78s  2.07%  runtime.send
+         0     0% 83.63%      0.77s  2.04%  runtime.send.goready.func1
+         0     0% 83.63%      4.86s 12.89%  runtime.startm
+         0     0% 83.63%      3.53s  9.37%  runtime.unlock (inline)
+         0     0% 83.63%      3.53s  9.37%  runtime.unlockWithRank (inline)
+         0     0% 83.63%      0.68s  1.80%  syscall.Syscall6
+         0     0% 83.63%     10.81s 28.68%  syscall.Write (inline)

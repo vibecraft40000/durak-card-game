@@ -1,0 +1,14 @@
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS last_name TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS photo_url TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD',
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW();
+
+UPDATE users
+SET display_name = CASE
+    WHEN username <> '' THEN '@' || username
+    ELSE display_name
+END
+WHERE display_name = '';

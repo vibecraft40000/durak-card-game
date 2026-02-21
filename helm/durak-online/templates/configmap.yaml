@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "durak-online.fullname" . }}-config
+data:
+  PORT: {{ .Values.env.PORT | quote }}
+  PPROF_PORT: {{ .Values.env.PPROF_PORT | quote }}
+  ALLOWED_ORIGIN: {{ .Values.env.ALLOWED_ORIGIN | quote }}
+  MATCH_STATE_TTL: {{ .Values.env.MATCH_STATE_TTL | quote }}
+  COMMISSION_BPS: {{ .Values.env.COMMISSION_BPS | quote }}

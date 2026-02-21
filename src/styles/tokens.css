@@ -1,0 +1,110 @@
+/**
+ * Design tokens — Figma "Дурак Онлайн" (LHwnTKpn8m3aGmPHMy8Q6E)
+ * Colors, spacing, typography, radii from Figma audit.
+ */
+:root {
+  /* Colors (Figma fills) */
+  --color-bg-primary: #010a1b;
+  --color-bg-secondary: #010a1b;
+  --color-surface: rgba(128, 138, 255, 0.2);
+  --color-surface-dark: rgba(0, 0, 0, 0.9);
+  --color-surface-card: rgba(128, 138, 255, 0.2);
+  --color-btn-primary: linear-gradient(180deg, rgba(128, 138, 255, 1) 0%, rgba(77, 83, 153, 1) 100%);
+  --color-btn-secondary: rgba(128, 138, 255, 0.15);
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #8d8d93;
+  --color-text-muted: #808aff;
+  --color-text-hint: rgba(255, 255, 255, 0.5);
+  --color-text-link: #808aff;
+  --color-border: rgba(128, 138, 255, 0.3);
+  --color-border-accent: #808aff;
+  --color-border-input: rgba(128, 138, 255, 0.3);
+  --color-error: #ff5555;
+  --color-success: #12eb53;
+  --color-accent: #808aff;
+  --color-accent-soft: #808aff;
+  --color-chip-active: linear-gradient(180deg, rgba(128, 138, 255, 1) 0%, rgba(77, 83, 153, 1) 100%);
+  --color-bg-radial: rgba(128, 138, 255, 0.25);
+  --color-btn-deposit: linear-gradient(180deg, #52d97a 0%, #2bc559 100%);
+  --color-btn-deposit-hover: linear-gradient(180deg, #45c96b 0%, #22a84a 100%);
+  --color-btn-withdraw: linear-gradient(180deg, #f0a0a0 0%, #e87878 100%);
+  --color-btn-withdraw-hover: linear-gradient(180deg, #e87878 0%, #dc5252 100%);
+
+  /* Spacing (4px grid) */
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+
+  /* Typography (Figma SF Pro: 12, 14, 16, 17, 20, 24, 36) */
+  --font-size-hint: 12px;
+  --font-size-small: 12px;
+  --font-size-body: 16px;
+  --font-size-label: 14px;
+  --font-size-title: 16px;
+  --font-size-heading: 24px;
+  --font-size-display: 36px;
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.1;
+  --line-height-normal: 1.2;
+  --line-height-relaxed: 1.4;
+
+  /* Radii (Figma: 12, 16, 24, 48, 50) */
+  --radius-btn: 999px;
+  --radius-card: 16px;
+  --radius-input: 12px;
+  --radius-avatar: 50%;
+  --radius-chip: 999px;
+  --radius-nav: 24px;
+  --radius-game-board: 24px;
+  --radius-table: 16px;
+
+  /* Sizes (Figma: button 44px, icon 48px, bottom nav 80px) */
+  --avatar-size: 38px;
+  --button-min-height: 44px;
+  --button-ghost-min-height: 36px;
+  --icon-button-size: 44px;
+
+  /* Game table (Figma: Table Cards 60x80, My Cards 90x120; hand scaled for mobile) */
+  --card-width: 52px;
+  --card-height: 68px;
+  --card-radius: 6px;
+  --card-table-width: 60px;
+  --card-table-height: 80px;
+  --table-min-height: 112px;
+  --table-padding: var(--space-16);
+}
+
+/* Light (white) theme */
+[data-theme="light"] {
+  color-scheme: light;
+  --color-bg-primary: #f5f6fc;
+  --color-bg-secondary: #eef0fa;
+  --color-surface: rgba(255, 255, 255, 0.9);
+  --color-surface-dark: rgba(255, 255, 255, 0.95);
+  --color-surface-card: rgba(255, 255, 255, 0.95);
+  --color-btn-primary: linear-gradient(180deg, #6b75e8 0%, #4d53a5 100%);
+  --color-btn-secondary: rgba(107, 117, 232, 0.12);
+  --color-text-primary: #1a1d3a;
+  --color-text-secondary: #5a5f7d;
+  --color-text-muted: #4d53a5;
+  --color-text-hint: rgba(26, 29, 58, 0.55);
+  --color-text-link: #4d53a5;
+  --color-border: rgba(107, 117, 232, 0.25);
+  --color-border-accent: #6b75e8;
+  --color-border-input: rgba(107, 117, 232, 0.3);
+  --color-chip-active: linear-gradient(180deg, #6b75e8 0%, #4d53a5 100%);
+  --color-bg-radial: rgba(107, 117, 232, 0.12);
+  --color-success: #0fa84a;
+  --color-btn-deposit: linear-gradient(180deg, #5ee96b 0%, #2ecc71 100%);
+  --color-btn-deposit-hover: linear-gradient(180deg, #4dd85c 0%, #27ae60 100%);
+  --color-btn-withdraw: linear-gradient(180deg, #f8b4b4 0%, #f08080 100%);
+  --color-btn-withdraw-hover: linear-gradient(180deg, #f08080 0%, #e74c3c 100%);
+}

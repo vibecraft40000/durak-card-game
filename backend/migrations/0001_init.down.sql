@@ -1,0 +1,9 @@
+DROP VIEW IF EXISTS user_balances;
+DROP TABLE IF EXISTS game_history;
+DROP TABLE IF EXISTS match_players;
+DROP TABLE IF EXISTS matches;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS users;
+DROP TYPE IF EXISTS match_status;
+DROP TYPE IF EXISTS transaction_status;
+DROP TYPE IF EXISTS transaction_type;

@@ -1,0 +1,79 @@
+# Git workflow: Caddy (auto SSL) + backend + frontend
+# Caddy handles HTTPS automatically, no certbot
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: durak
+      POSTGRES_USER: durak
+      POSTGRES_PASSWORD: durak
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U durak -d durak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    command:
+      ["-path", "/migrations", "-database", "postgres://durak:durak@postgres:5432/durak?sslmode=disable", "up"]
+    volumes:
+      - ../backend/migrations:/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      INSTANCE_ID: "api-1"
+      PORT: "8080"
+      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      JWT_SECRET: "${JWT_SECRET:-change-me}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      ALLOW_DEV_TELEGRAM_AUTH: "${ALLOW_DEV_TELEGRAM_AUTH:-false}"
+      DISABLE_MONEY: "${DISABLE_MONEY:-false}"
+      ROOM_WAIT_TIMEOUT: "5m"
+      ALLOWED_ORIGIN: "https://durakonline.duckdns.org"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./frontend-dist:/srv:ro
+      - caddy_data:/data
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  caddy_data:

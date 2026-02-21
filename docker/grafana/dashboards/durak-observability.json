@@ -1,0 +1,51 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "panels": [
+    {
+      "title": "WS Active Connections",
+      "type": "timeseries",
+      "targets": [{ "expr": "ws_active_connections", "refId": "A" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Active Matches",
+      "type": "timeseries",
+      "targets": [{ "expr": "active_matches", "refId": "A" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Redis Latency p95",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(redis_latency_seconds_bucket[1m])) by (le,op))",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "title": "DB Query p95",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(db_query_duration_seconds_bucket[1m])) by (le,query))",
+          "refId": "A"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "title": "Settlement Total",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(increase(settlement_total[5m])) by (result)", "refId": "A" }],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }
+    }
+  ],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["durak"],
+  "title": "Durak Observability",
+  "version": 1
+}

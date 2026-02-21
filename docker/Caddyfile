@@ -1,0 +1,21 @@
+# Caddy - auto HTTPS for durakonline.duckdns.org
+
+durakonline.duckdns.org, www.durakonline.duckdns.org {
+    root * /srv
+    handle /api/* {
+        reverse_proxy api:8080
+    }
+    handle /auth/* {
+        reverse_proxy api:8080
+    }
+    handle /ws {
+        reverse_proxy api:8080
+    }
+    handle /health {
+        reverse_proxy api:8080
+    }
+    handle {
+        try_files {path} {path}/ /index.html
+        file_server
+    }
+}

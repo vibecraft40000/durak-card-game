@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      WEBAPP_URL: ${WEBAPP_URL:-https://your-domain.com}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
+      HOST: 0.0.0.0
+      PORT: 8081
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
