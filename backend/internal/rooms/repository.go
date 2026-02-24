@@ -92,6 +92,12 @@ func (r *Repository) Get(ctx context.Context, roomID string) (Room, bool) {
 	if err := json.Unmarshal([]byte(raw), &room); err != nil {
 		return Room{}, false
 	}
+	if n, _ := r.redis.Exists(ctx, readyKey(roomID)).Result(); n > 0 {
+		ready, err := r.GetReadyUsers(ctx, roomID)
+		if err == nil {
+			room.ReadyUsers = ready
+		}
+	}
 	return room, true
 }
 
@@ -123,4 +129,51 @@ func (r *Repository) Save(ctx context.Context, room Room) error {
 
 func roomKey(roomID string) string {
 	return "room:" + roomID
+}
+
+func readyKey(roomID string) string {
+	return "room:" + roomID + ":ready"
+}
+
+// AddReadyUser atomically adds user to ready set. Prevents lost update race.
+func (r *Repository) AddReadyUser(ctx context.Context, roomID, userID string) error {
+	key := readyKey(roomID)
+	start := time.Now()
+	err := r.redis.SAdd(ctx, key, userID).Err()
+	metrics.ObserveRedisLatency("sadd_ready", start)
+	if err != nil {
+		return err
+	}
+	_ = r.redis.Expire(ctx, key, roomTTLActive).Err()
+	return nil
+}
+
+// GetReadyUsers returns the current ready set (source of truth).
+func (r *Repository) GetReadyUsers(ctx context.Context, roomID string) ([]string, error) {
+	key := readyKey(roomID)
+	start := time.Now()
+	vals, err := r.redis.SMembers(ctx, key).Result()
+	metrics.ObserveRedisLatency("smembers_ready", start)
+	return vals, err
+}
+
+// RemoveReadyUser removes user from ready set (e.g. on leave).
+func (r *Repository) RemoveReadyUser(ctx context.Context, roomID, userID string) error {
+	key := readyKey(roomID)
+	start := time.Now()
+	err := r.redis.SRem(ctx, key, userID).Err()
+	metrics.ObserveRedisLatency("srem_ready", start)
+	return err
+}
+
+// ClearReadySet removes the ready set (call after match start or on start failure).
+func (r *Repository) ClearReadySet(ctx context.Context, roomID string) error {
+	key := readyKey(roomID)
+	return r.redis.Del(ctx, key).Err()
+}
+
+// ReleaseStartLock removes the start lock (call on HoldBet/StartMatch failure so room can retry).
+func (r *Repository) ReleaseStartLock(ctx context.Context, roomID string) error {
+	key := "room:" + roomID + ":starting"
+	return r.redis.Del(ctx, key).Err()
 }

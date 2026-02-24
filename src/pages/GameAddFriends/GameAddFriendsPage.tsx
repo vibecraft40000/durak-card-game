@@ -5,7 +5,7 @@ import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
 import { hapticNotification } from "@/shared/lib/telegram";
 
-const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "DurakOnlineBot";
+const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot";
 
 export function GameAddFriendsPage() {
   const { id } = useParams<{ id: string }>();

@@ -1,32 +1,15 @@
 import logging
 from aiogram import Router
-from aiogram.types import Message, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import Message
 from aiogram.filters import CommandStart
 
 router = Router(name="start")
 logger = logging.getLogger(__name__)
 
 
-def get_play_keyboard() -> ReplyKeyboardMarkup:
-    from config import WEBAPP_URL
-
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(
-                    text="Играть",
-                    web_app=WebAppInfo(url=WEBAPP_URL),
-                )
-            ]
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    """При /start: считываем данные пользователя, логируем, показываем кнопку Играть."""
+    """При /start: считываем данные пользователя, логируем, приветствие без кнопки."""
     user = message.from_user
     if not user:
         return
@@ -41,6 +24,5 @@ async def cmd_start(message: Message):
     logger.info("User /start: %s", user_info)
 
     await message.answer(
-        "Нажмите «Играть», чтобы открыть игру. Ваши данные будут переданы в мини-приложение.",
-        reply_markup=get_play_keyboard(),
+        "Дурак Онлайн. Откройте игру через Menu Button (иконка слева от поля ввода)."
     )

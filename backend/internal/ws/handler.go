@@ -3,7 +3,8 @@ package ws
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/ratelimit"
 	"durakonline/backend/internal/rooms"
+	"durakonline/backend/internal/users"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
 
@@ -26,6 +28,7 @@ type Handler struct {
 	rooms         *rooms.Service
 	games         *games.Service
 	wallet        *wallet.Service
+	users         *users.Repository
 	commissionBps int
 	disableMoney  bool
 	hub           *Hub
@@ -34,12 +37,13 @@ type Handler struct {
 	upgrader      websocket.Upgrader
 }
 
-func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service) *Handler {
+func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, usersRepo *users.Repository, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service) *Handler {
 	return &Handler{
 		authService:   authService,
 		rooms:         roomsService,
 		games:         gamesService,
 		wallet:        walletService,
+		users:         usersRepo,
 		commissionBps: commissionBps,
 		disableMoney:  disableMoney,
 		hub:           hub,
@@ -71,9 +75,22 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	const maxMessageSize = 32 << 10
+	conn.SetReadLimit(maxMessageSize)
+
+	room, roomErr := h.rooms.Get(r.Context(), roomID)
+	if roomErr != nil || !slices.Contains(room.Players, userID) {
+		conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "forbidden_room"), time.Now().Add(5*time.Second))
+		conn.Close()
+		return
+	}
 
 	client := NewClient(userID, roomID, conn, 512)
-	h.hub.Register(client)
+	if !h.hub.Register(client) {
+		conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too_many_connections"), time.Now().Add(5*time.Second))
+		conn.Close()
+		return
+	}
 	var cleanupOnce sync.Once
 	cleanup := func() {
 		cleanupOnce.Do(func() {
@@ -131,6 +148,9 @@ func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event ClientEvent) {
 	switch event.Type {
 	case "join_room", "reconnect":
+		if !h.allowWSRateLimit(ctx, client, event.Type) {
+			return
+		}
 		room, err := h.rooms.Get(ctx, client.RoomID)
 		if err != nil {
 			h.sendRoomError(client, err.Error())
@@ -156,25 +176,36 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 			if err == nil {
 				h.broadcast(ctx, client.RoomID, ServerEvent{
 					Type:    "game_state",
-					Payload: toGameStateDTO(client.RoomID, state),
+					Payload: h.toGameStateDTO(ctx, client.RoomID, state),
 				})
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
 	case "ready", "confirm_join":
-		log.Printf("confirmFlow received room_id=%s user_id=%s event=%s", client.RoomID, client.UserID, event.Type)
 		room, err := h.rooms.Ready(ctx, client.RoomID, client.UserID)
 		if err != nil {
-			log.Printf("confirmFlow failed room_id=%s user_id=%s err=%v", client.RoomID, client.UserID, err)
 			h.sendRoomError(client, err.Error())
 			return
 		}
-		log.Printf("confirmFlow updated room_id=%s user_id=%s ready=%d players=%d match_id=%s", client.RoomID, client.UserID, len(room.ReadyUsers), len(room.Players), room.MatchID)
 		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
 		if room.MatchID != "" {
 			state, err := h.games.GetState(ctx, room.MatchID)
 			if err == nil {
-				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: toGameStateDTO(client.RoomID, state)})
+				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+				h.handleBotTurns(ctx, client.RoomID, room, state)
+			}
+		}
+	case "start_game":
+		room, err := h.rooms.StartGame(ctx, client.RoomID, client.UserID)
+		if err != nil {
+			h.sendRoomError(client, err.Error())
+			return
+		}
+		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
+		if room.MatchID != "" {
+			state, err := h.games.GetState(ctx, room.MatchID)
+			if err == nil {
+				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
@@ -185,7 +216,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 			return
 		}
 		if !allowed {
-			h.sendRoomError(client, "rate limit exceeded")
+			h.sendRoomErrorWithCode(client, "rate limit exceeded", "RATE_LIMIT")
 			return
 		}
 		moveStart := time.Now()
@@ -193,27 +224,60 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 		actionRaw, _ := event.Payload["action"].(string)
 		action := normalizeAction(actionRaw)
 		cardID, _ := event.Payload["cardId"].(string)
+		var expectedVersion *int64
+		if v, ok := event.Payload["expectedVersion"].(float64); ok {
+			iv := int64(v)
+			expectedVersion = &iv
+		}
+		actionID, _ := event.Payload["actionId"].(string)
 		room, err := h.rooms.Get(ctx, client.RoomID)
 		if err != nil || room.MatchID == "" {
 			h.sendRoomError(client, "match is not active")
 			return
 		}
-		state, err := h.games.Apply(ctx, room.MatchID, client.UserID, action, cardID)
+		state, applied, err := h.games.Apply(ctx, room.MatchID, client.UserID, action, cardID, expectedVersion, actionID)
 		if err != nil {
-			h.sendRoomError(client, err.Error())
+			if errors.Is(err, games.ErrVersionMismatch) {
+				metrics.IncVersionMismatch()
+				// Handled separately: send game_state + version_mismatch, no error
+				currentState, getErr := h.games.GetState(ctx, room.MatchID)
+				if getErr == nil {
+					_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, currentState)})
+					_ = h.hub.Send(client, ServerEvent{
+						Type: "version_mismatch",
+						Payload: map[string]any{
+							"roomId":   client.RoomID,
+							"action":   actionRaw,
+							"cardId":   cardID,
+							"actionId": actionID,
+						},
+					})
+				}
+				return
+			}
+			code := errorCodeFromEngine(err)
+			h.sendRoomErrorWithCode(client, err.Error(), code)
 			return
+		}
+		if !applied {
+			return
+		}
+		eventID := ""
+		if state.Version > 0 {
+			eventID = fmt.Sprintf("%s:v%d", room.MatchID, state.Version)
 		}
 		h.broadcast(ctx, client.RoomID, ServerEvent{
 			Type: "move_applied",
 			Payload: map[string]any{
 				"roomId":   client.RoomID,
 				"matchId":  room.MatchID,
+				"eventId":  eventID,
 				"playerId": client.UserID,
 				"action":   action,
 				"cardId":   cardID,
 			},
 		})
-		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: toGameStateDTO(client.RoomID, state)})
+		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
 		h.broadcast(ctx, client.RoomID, ServerEvent{
 			Type: "timer_update",
 			Payload: map[string]any{
@@ -223,8 +287,9 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 			},
 		})
 		if state.Status == engine.StatusFinished {
+			var payoutInfo *games.PayoutInfo
 			if !h.disableMoney && !containsBotPlayer(state.PlayerOrder) {
-				_ = games.SettleIfFinished(ctx, h.wallet, state, room.Stake, h.commissionBps)
+				payoutInfo, _ = h.games.SettleMatchIfFinished(ctx, h.wallet, state, room.Stake, h.commissionBps)
 			}
 			if _, err := h.rooms.MarkRoomFinished(ctx, client.RoomID); err == nil {
 				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: func() any {
@@ -232,22 +297,41 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 					return r
 				}()})
 			}
-			h.broadcast(ctx, client.RoomID, ServerEvent{
-				Type: "match_finished",
-				Payload: map[string]any{
-					"roomId":         client.RoomID,
-					"winnerPlayerId": state.WinnerPlayer,
-				},
-			})
+			payload := map[string]any{"roomId": client.RoomID, "winnerPlayerId": state.WinnerPlayer}
+			if payoutInfo != nil {
+				payload["settlementId"] = payoutInfo.SettlementID
+				payload["payouts"] = payoutInfo.Payouts
+				payload["commission"] = payoutInfo.Commission
+				payload["pot"] = payoutInfo.Pot
+				if len(payoutInfo.NewBalances) > 0 {
+					payload["newBalances"] = payoutInfo.NewBalances
+				}
+			}
+			h.broadcast(ctx, client.RoomID, ServerEvent{Type: "match_finished", Payload: payload})
 			return
 		}
 		h.handleBotTurns(ctx, client.RoomID, room, state)
 	case "send_message":
+		if !h.allowWSRateLimit(ctx, client, "send_message") {
+			return
+		}
 		message, _ := event.Payload["message"].(string)
 		h.broadcast(ctx, client.RoomID, ServerEvent{
 			Type:    "chat_message",
 			Payload: map[string]string{"userId": client.UserID, "message": message},
 		})
+	case "sync_request":
+		if !h.allowWSRateLimit(ctx, client, "sync_request") {
+			return
+		}
+		room, err := h.rooms.Get(ctx, client.RoomID)
+		if err != nil || room.MatchID == "" {
+			return
+		}
+		state, err := h.games.GetState(ctx, room.MatchID)
+		if err == nil {
+			_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+		}
 	default:
 		h.sendRoomError(client, "unsupported event type")
 	}
@@ -276,30 +360,35 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 			return
 		}
 		action, cardID := chooseBotMove(current)
-		nextState, err := h.games.Apply(ctx, room.MatchID, current.TurnPlayerID, action, cardID)
+		nextState, _, err := h.games.Apply(ctx, room.MatchID, current.TurnPlayerID, action, cardID, nil, "")
 		if err != nil {
 			fallback := engine.ActionPass
 			if current.TurnState == engine.TurnDefend {
 				fallback = engine.ActionTake
 			}
-			nextState, err = h.games.Apply(ctx, room.MatchID, current.TurnPlayerID, fallback, "")
+			nextState, _, err = h.games.Apply(ctx, room.MatchID, current.TurnPlayerID, fallback, "", nil, "")
 			if err != nil {
 				return
 			}
 			action = fallback
 			cardID = ""
 		}
+		eventID := ""
+		if nextState.Version > 0 {
+			eventID = fmt.Sprintf("%s:v%d", room.MatchID, nextState.Version)
+		}
 		h.broadcast(ctx, roomID, ServerEvent{
 			Type: "move_applied",
 			Payload: map[string]any{
 				"roomId":   roomID,
 				"matchId":  room.MatchID,
+				"eventId":  eventID,
 				"playerId": current.TurnPlayerID,
 				"action":   string(action),
 				"cardId":   cardID,
 			},
 		})
-		h.broadcast(ctx, roomID, ServerEvent{Type: "game_state", Payload: toGameStateDTO(roomID, nextState)})
+		h.broadcast(ctx, roomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, roomID, nextState)})
 		h.broadcast(ctx, roomID, ServerEvent{
 			Type: "timer_update",
 			Payload: map[string]any{
@@ -309,17 +398,22 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 			},
 		})
 		if nextState.Status == engine.StatusFinished {
+			var payoutInfo *games.PayoutInfo
 			if !h.disableMoney && !containsBotPlayer(nextState.PlayerOrder) {
-				_ = games.SettleIfFinished(ctx, h.wallet, nextState, room.Stake, h.commissionBps)
+				payoutInfo, _ = h.games.SettleMatchIfFinished(ctx, h.wallet, nextState, room.Stake, h.commissionBps)
 			}
 			_, _ = h.rooms.MarkRoomFinished(ctx, roomID)
-			h.broadcast(ctx, roomID, ServerEvent{
-				Type: "match_finished",
-				Payload: map[string]any{
-					"roomId":         roomID,
-					"winnerPlayerId": nextState.WinnerPlayer,
-				},
-			})
+			payload := map[string]any{"roomId": roomID, "winnerPlayerId": nextState.WinnerPlayer}
+			if payoutInfo != nil {
+				payload["settlementId"] = payoutInfo.SettlementID
+				payload["payouts"] = payoutInfo.Payouts
+				payload["commission"] = payoutInfo.Commission
+				payload["pot"] = payoutInfo.Pot
+				if len(payoutInfo.NewBalances) > 0 {
+					payload["newBalances"] = payoutInfo.NewBalances
+				}
+			}
+			h.broadcast(ctx, roomID, ServerEvent{Type: "match_finished", Payload: payload})
 			return
 		}
 		current = nextState
@@ -346,6 +440,60 @@ func containsBotPlayer(playerIDs []string) bool {
 	return slices.ContainsFunc(playerIDs, rooms.IsBotPlayer)
 }
 
+// BroadcastTimeoutApplied broadcasts move_applied, game_state, timer_update for a timeout-applied move.
+// If match finished, also broadcasts room_update and match_finished (with settlement).
+func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, result *games.TimeoutResult, room rooms.Room) {
+	eventID := ""
+	if result.State.Version > 0 {
+		eventID = fmt.Sprintf("%s:v%d", result.MatchID, result.State.Version)
+	}
+	h.broadcast(ctx, roomID, ServerEvent{
+		Type: "move_applied",
+		Payload: map[string]any{
+			"roomId":   roomID,
+			"matchId":  result.MatchID,
+			"eventId":  eventID,
+			"playerId": result.PlayerID,
+			"action":   string(result.Action),
+			"cardId":   result.CardID,
+		},
+	})
+	h.broadcast(ctx, roomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, roomID, result.State)})
+	h.broadcast(ctx, roomID, ServerEvent{
+		Type: "timer_update",
+		Payload: map[string]any{
+			"roomId":       roomID,
+			"turnPlayerId": result.State.TurnPlayerID,
+			"turnEndsAt":   result.State.TurnEndsAt.UnixMilli(),
+		},
+	})
+	if result.State.Status == engine.StatusFinished {
+		var payoutInfo *games.PayoutInfo
+		if !h.disableMoney && !containsBotPlayer(result.State.PlayerOrder) {
+			payoutInfo, _ = h.games.SettleMatchIfFinished(ctx, h.wallet, result.State, room.Stake, h.commissionBps)
+		}
+		if _, err := h.rooms.MarkRoomFinished(ctx, roomID); err == nil {
+			h.broadcast(ctx, roomID, ServerEvent{Type: "room_update", Payload: func() any {
+				r, _ := h.rooms.Get(ctx, roomID)
+				return r
+			}()})
+		}
+		payload := map[string]any{"roomId": roomID, "winnerPlayerId": result.State.WinnerPlayer}
+		if payoutInfo != nil {
+			payload["settlementId"] = payoutInfo.SettlementID
+			payload["payouts"] = payoutInfo.Payouts
+			payload["commission"] = payoutInfo.Commission
+			payload["pot"] = payoutInfo.Pot
+			if len(payoutInfo.NewBalances) > 0 {
+				payload["newBalances"] = payoutInfo.NewBalances
+			}
+		}
+		h.broadcast(ctx, roomID, ServerEvent{Type: "match_finished", Payload: payload})
+		return
+	}
+	h.handleBotTurns(ctx, roomID, room, result.State)
+}
+
 func (h *Handler) broadcast(ctx context.Context, roomID string, event ServerEvent) {
 	h.hub.Broadcast(roomID, event)
 	if h.bus != nil {
@@ -357,6 +505,22 @@ func (h *Handler) Drain(timeout time.Duration) {
 	h.hub.Drain(timeout)
 }
 
+const wsRateLimitPer10s = 20
+
+func (h *Handler) allowWSRateLimit(ctx context.Context, client *Client, eventType string) bool {
+	key := fmt.Sprintf("ws:%s:%s", client.UserID, eventType)
+	allowed, err := h.limiter.Allow(ctx, key, wsRateLimitPer10s, 10*time.Second)
+	if err != nil {
+		h.sendRoomError(client, "rate limiter unavailable")
+		return false
+	}
+	if !allowed {
+		h.sendRoomErrorWithCode(client, "rate limit exceeded", "RATE_LIMIT")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) sendError(conn *websocket.Conn, message string) {
 	raw, _ := json.Marshal(ServerEvent{
 		Type:    "error",
@@ -365,24 +529,49 @@ func (h *Handler) sendError(conn *websocket.Conn, message string) {
 	_ = conn.WriteMessage(websocket.TextMessage, raw)
 }
 
-func (h *Handler) sendRoomError(client *Client, message string) {
-	_ = h.hub.Send(client, ServerEvent{
-		Type:    "error",
-		Payload: map[string]string{"message": message},
-	})
+func errorCodeFromEngine(err error) string {
+	switch {
+	case errors.Is(err, engine.ErrInvalidTurn):
+		return "INVALID_TURN"
+	case errors.Is(err, engine.ErrCardMissing), errors.Is(err, engine.ErrInvalidMove),
+		errors.Is(err, engine.ErrCardDoesNotBeat), errors.Is(err, engine.ErrAttackCardDenied):
+		return "INVALID_CARD"
+	default:
+		return ""
+	}
 }
 
-func toGameStateDTO(roomID string, state engine.GameState) GameStateDTO {
+func (h *Handler) sendRoomError(client *Client, message string) {
+	h.sendRoomErrorWithCode(client, message, "")
+}
+
+func (h *Handler) sendRoomErrorWithCode(client *Client, message string, errorCode string) {
+	payload := map[string]any{"message": message}
+	if errorCode != "" {
+		payload["errorCode"] = errorCode
+	}
+	_ = h.hub.Send(client, ServerEvent{Type: "error", Payload: payload})
+}
+
+func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engine.GameState) GameStateDTO {
 	players := make([]PlayerDTO, 0, len(state.Hands))
 	for _, playerID := range state.PlayerOrder {
 		hand := state.Hands[playerID]
-		username := "player-" + playerID[:4]
+		displayName := "player-" + playerID[:4]
+		photoURL := ""
 		if rooms.IsBotPlayer(playerID) {
-			username = "bot"
+			displayName = "bot"
+		} else if user, ok := h.users.GetByID(ctx, playerID); ok {
+			if user.DisplayName != "" {
+				displayName = user.DisplayName
+			}
+			photoURL = user.PhotoURL
 		}
 		players = append(players, PlayerDTO{
 			ID:            playerID,
-			Username:      username,
+			Username:      displayName,
+			DisplayName:   displayName,
+			PhotoURL:      photoURL,
 			HandCount:     len(hand),
 			Hand:          hand,
 			IsCurrentTurn: state.TurnPlayerID == playerID,
@@ -393,9 +582,15 @@ func toGameStateDTO(roomID string, state engine.GameState) GameStateDTO {
 		c := state.Deck[len(state.Deck)-1]
 		trumpCard = &c
 	}
+	phase := string(state.TurnState)
+	if phase == "" {
+		phase = "attack"
+	}
 	return GameStateDTO{
 		RoomID:         roomID,
 		MatchID:        state.MatchID,
+		Version:        state.Version,
+		Phase:          phase,
 		Players:        players,
 		TableCards:     state.TableCards,
 		TrumpSuit:      string(state.Trump),

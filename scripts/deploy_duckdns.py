@@ -16,8 +16,12 @@ def main():
     if not pw and len(sys.argv) > 1:
         pw = sys.argv[1]
     if not pw:
+        pw_file = PROJECT_ROOT / ".deploy-pw"
+        if pw_file.exists():
+            pw = pw_file.read_text(encoding="utf-8").strip()
+    if not pw:
         import getpass
-        pw = getpass.getpass("Password: ")
+        pw = getpass.getpass("Password (root@72.56.74.7): ")
 
     try:
         import paramiko
@@ -27,12 +31,11 @@ def main():
         sys.exit(1)
 
     os.chdir(PROJECT_ROOT)
-    print("1. Preparing frontend...")
-    if not (PROJECT_ROOT / "docker" / "frontend-dist" / "index.html").exists():
-        subprocess.run("npm run build", shell=True, check=True, cwd=PROJECT_ROOT)
-        (PROJECT_ROOT / "docker" / "frontend-dist").mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.copytree(PROJECT_ROOT / "dist", PROJECT_ROOT / "docker" / "frontend-dist", dirs_exist_ok=True)
+    print("1. Building frontend...")
+    subprocess.run("npm run build", shell=True, check=True, cwd=PROJECT_ROOT)
+    (PROJECT_ROOT / "docker" / "frontend-dist").mkdir(parents=True, exist_ok=True)
+    import shutil
+    shutil.copytree(PROJECT_ROOT / "dist", PROJECT_ROOT / "docker" / "frontend-dist", dirs_exist_ok=True)
 
     print("2. Connecting...")
     ssh = paramiko.SSHClient()
@@ -61,8 +64,29 @@ def main():
         scp.put(str(PROJECT_ROOT / "docker"), REMOTE_PATH, recursive=True)
         scp.put(str(PROJECT_ROOT / ".env"), f"{REMOTE_PATH}/.env")
 
-    print("6. Running setup...")
-    _, stdout, stderr = ssh.exec_command(f"cd {REMOTE_PATH} && sh scripts/setup-duckdns-ssl.sh")
+    print("5. Applying migrations...")
+    _, stdout, stderr = ssh.exec_command(
+        f"cd {REMOTE_PATH} && docker compose -f docker/docker-compose.caddy.yml run --rm migrate"
+    )
+    out, err = stdout.read().decode(), stderr.read().decode()
+    print(out)
+    if err and "no change" not in err.lower() and "error" in err.lower():
+        print(err, file=sys.stderr)
+
+    print("6. Rebuilding and restarting backend...")
+    _, stdout, stderr = ssh.exec_command(
+        f"cd {REMOTE_PATH} && "
+        "docker compose -f docker/docker-compose.caddy.yml up -d --build --force-recreate api"
+    )
+    print(stdout.read().decode())
+    err = stderr.read().decode()
+    if err:
+        print(err, file=sys.stderr)
+
+    print("7. Restarting Caddy (frontend)...")
+    _, stdout, stderr = ssh.exec_command(
+        f"cd {REMOTE_PATH} && docker compose -f docker/docker-compose.caddy.yml restart caddy"
+    )
     print(stdout.read().decode())
     err = stderr.read().decode()
     if err:

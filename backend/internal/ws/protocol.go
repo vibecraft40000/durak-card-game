@@ -15,6 +15,8 @@ type ServerEvent struct {
 type GameStateDTO struct {
 	RoomID         string        `json:"roomId"`
 	MatchID        string        `json:"matchId"`
+	Version        int64         `json:"version"`
+	Phase          string        `json:"phase"`
 	Players        []PlayerDTO   `json:"players"`
 	TableCards     []engine.Card `json:"tableCards"`
 	TrumpSuit      string        `json:"trumpSuit"`
@@ -26,9 +28,11 @@ type GameStateDTO struct {
 }
 
 type PlayerDTO struct {
-	ID            string        `json:"id"`
-	Username      string        `json:"username"`
-	HandCount     int           `json:"handCount"`
-	Hand          []engine.Card `json:"hand,omitempty"`
-	IsCurrentTurn bool          `json:"isCurrentTurn"`
+	ID          string        `json:"id"`
+	Username    string        `json:"username"` // для совместимости
+	DisplayName string        `json:"displayName"`
+	PhotoURL    string        `json:"photoUrl"`
+	HandCount   int           `json:"handCount"`
+	Hand        []engine.Card `json:"hand,omitempty"`
+	IsCurrentTurn bool        `json:"isCurrentTurn"`
 }

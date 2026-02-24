@@ -5,6 +5,7 @@ type TelegramWebApp = {
   setBackgroundColor?: (color: string) => void;
   colorScheme?: "light" | "dark";
   initDataUnsafe?: {
+    start_param?: string;
     user?: {
       id: number;
       username?: string;
@@ -54,6 +55,23 @@ export function getTelegramUser() {
 
 export function getTelegramInitData() {
   return window.Telegram?.WebApp?.initData ?? "";
+}
+
+/** Start param when opened via t.me/Bot/app?startapp=... */
+export function getTelegramStartParam(): string | undefined {
+  return window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+}
+
+/** Opens a t.me link in the Telegram app (required for Wallet Pay directPayLink). */
+export function openTelegramLink(url: string) {
+  const fn = (window.Telegram?.WebApp as { openTelegramLink?: (url: string) => void })?.openTelegramLink;
+  if (fn) {
+    fn(url);
+  } else if (url.startsWith("https://t.me/")) {
+    window.open(url, "_blank");
+  } else {
+    window.open(url, "_blank");
+  }
 }
 
 type HapticType = "light" | "medium" | "heavy" | "rigid" | "soft";

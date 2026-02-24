@@ -13,7 +13,7 @@ func TestReplayKeyFormat(t *testing.T) {
 }
 
 func TestJWT_RoundTrip(t *testing.T) {
-	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour)
+	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour, "")
 	token, err := service.issueJWT("user-1", time.Minute)
 	if err != nil {
 		t.Fatalf("issue jwt failed: %v", err)

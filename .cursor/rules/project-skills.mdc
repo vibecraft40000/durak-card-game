@@ -1,0 +1,32 @@
+---
+description: Project skills available for agent use
+globs: 
+alwaysApply: true
+---
+
+# Project Skill Usage Rules
+
+This project is a real-time multiplayer card game with WebSocket backend,
+gesture-based UI, animation-heavy frontend, and Redis-based state management.
+
+When generating or modifying code:
+
+- Use `frontend-design` and `web-design-guidelines`
+  for UI, layout, animation, and component structure.
+
+- Use `vercel-react-best-practices`
+  for React architecture, state management, performance, and rendering.
+
+- Use `webapp-testing`
+  for tests (unit, integration, engine determinism, race conditions).
+
+- Use `nodejs-backend-patterns`
+  for backend structure, service layer, Redis usage, concurrency, and scaling.
+
+- Use `api-design-principles`
+  for REST endpoints, WebSocket protocol, error codes, versioning, idempotency.
+
+- Use `typescript-advanced-types`
+  for strict typing of GameState, WebSocket payloads, selectors, and reducers.
+
+Always apply relevant skills automatically based on the domain of the task.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
@@ -13,7 +14,11 @@ import (
 	"time"
 
 	"durakonline/backend/internal/auth"
+	"durakonline/backend/internal/cryptopay"
+	"durakonline/backend/internal/friends"
 	"durakonline/backend/internal/games"
+	"durakonline/backend/internal/history"
+	"durakonline/backend/internal/payments"
 	"durakonline/backend/internal/ratelimit"
 	"durakonline/backend/internal/rooms"
 	"durakonline/backend/internal/scheduler"
@@ -42,6 +47,19 @@ func main() {
 	}
 	defer log.Sync()
 
+	// Env sanity check
+	log.Info("env check",
+		zap.Bool("JWT_SECRET_loaded", len(os.Getenv("JWT_SECRET")) > 0),
+		zap.Bool("TELEGRAM_BOT_TOKEN_loaded", len(os.Getenv("TELEGRAM_BOT_TOKEN")) > 0),
+		zap.Bool("ALLOW_DEV_TELEGRAM_AUTH", os.Getenv("ALLOW_DEV_TELEGRAM_AUTH") == "true"),
+	)
+	if cfg.DisableMoney && cfg.Env == "production" {
+		log.Fatal("DISABLE_MONEY=true in production is not allowed - abort")
+	}
+	if cfg.DisableMoney {
+		log.Info("MODE: TEST (DISABLE_MONEY=true, HoldBet skipped)")
+	}
+
 	postgresPool, err := storage.NewPostgresPool(context.Background(), cfg.PostgresURL)
 	if err != nil {
 		log.Fatal("postgres connect failed", zap.Error(err))
@@ -67,7 +85,7 @@ func main() {
 
 	userRepo := users.NewRepository(postgresPool)
 	txRepo := transactions.NewRepository(postgresPool)
-	authService := auth.NewService(userRepo, redisClient, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.ReplayTTL)
+	authService := auth.NewService(userRepo, redisClient, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.ReplayTTL, cfg.TelegramBotToken)
 	authHandler := auth.NewHandler(cfg, authService)
 
 	walletService := wallet.NewService(postgresPool, txRepo)
@@ -76,10 +94,28 @@ func main() {
 	roomsService := rooms.NewService(roomsRepo, gamesService, walletService, cfg.CommissionBps, cfg.DisableMoney)
 	roomsHandler := rooms.NewHandler(roomsService)
 	limiter := ratelimit.NewService(redisClient)
+	webappURL := cfg.AllowedOrigin
+	if webappURL == "*" {
+		webappURL = "https://durakonline.duckdns.org"
+	}
+	paymentsRepo := payments.NewRepository(postgresPool)
+	cryptoPayHandler := cryptopay.NewHandler(cfg.CryptoPayAPIToken, cfg.CryptoPayTestnet, txRepo, redisClient, webappURL, log).
+		WithPaymentsRepo(paymentsRepo)
+	paymentsClient := payments.NewClient(cfg.WalletPayAPIKey)
+	paymentsService := payments.NewService(postgresPool, paymentsRepo, paymentsClient, txRepo)
+	paymentsHandler := payments.NewHandler(paymentsService, cfg.WalletPayAPIKey)
+
+	historyRepo := history.NewRepository(postgresPool)
+	historyService := history.NewService(historyRepo)
+	historyHandler := history.NewHandler(historyService)
+
+	friendsRepo := friends.NewRepository(postgresPool)
+	friendsService := friends.NewService(friendsRepo, userRepo)
+	friendsHandler := friends.NewHandler(friendsService, userRepo)
 
 	hub := ws.NewHub()
 	bus := ws.NewBus(redisClient, instanceID)
-	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter)
+	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter)
 
 	router := chi.NewRouter()
 	router.Use(mw.RequestID)
@@ -89,12 +125,21 @@ func main() {
 	router.Use(jsonContentType)
 	router.Use(cors(cfg.AllowedOrigin))
 
-	router.Get("/health", healthHandler(postgresPool, redisClient))
-	router.Get("/healthz", healthHandler(postgresPool, redisClient))
+	router.Get("/health", healthHandler(postgresPool, redisClient, cfg))
+	router.Get("/healthz", healthHandler(postgresPool, redisClient, cfg))
+	router.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		cryptoBotUsername := "CryptoBot"
+		if cfg.CryptoPayTestnet || strings.HasPrefix(cfg.CryptoPayAPIToken, "test") {
+			cryptoBotUsername = "CryptoTestnetBot"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cryptoBotUsername": cryptoBotUsername,
+		})
+	})
 	router.Get("/live", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	router.Get("/ready", healthHandler(postgresPool, redisClient))
+	router.Get("/ready", healthHandler(postgresPool, redisClient, cfg))
 	router.Handle("/metrics", metrics.Handler())
 
 	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {
@@ -105,7 +150,18 @@ func main() {
 	router.Group(func(protected chi.Router) {
 		protected.Use(customMiddleware.AuthJWT(authService, userRepo))
 		protected.Get("/api/profile", func(w http.ResponseWriter, r *http.Request) {
-			user, _ := customMiddleware.UserFromContext(r.Context())
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if user.PhotoURL == "" && user.TelegramID != 0 && cfg.TelegramBotToken != "" {
+				if photoURL := auth.FetchUserPhotoURL(r.Context(), cfg.TelegramBotToken, user.TelegramID); photoURL != "" {
+					if updated, err := userRepo.UpdatePhotoURL(r.Context(), user.ID, photoURL); err == nil {
+						user = updated
+					}
+				}
+			}
 			balance, _ := txRepo.Balance(r.Context(), user.ID)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user":    user,
@@ -113,7 +169,11 @@ func main() {
 			})
 		})
 		protected.Get("/api/user/settings", func(w http.ResponseWriter, r *http.Request) {
-			user, _ := customMiddleware.UserFromContext(r.Context())
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"settings": map[string]any{
 					"displayName": user.DisplayName,
@@ -123,7 +183,11 @@ func main() {
 			})
 		})
 		protected.Patch("/api/user/settings", func(w http.ResponseWriter, r *http.Request) {
-			user, _ := customMiddleware.UserFromContext(r.Context())
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			var req struct {
 				DisplayName string `json:"displayName"`
 				Currency    string `json:"currency"`
@@ -145,17 +209,72 @@ func main() {
 				"user": updated,
 			})
 		})
+		protected.Patch("/api/profile/language", func(w http.ResponseWriter, r *http.Request) {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			var req struct {
+				Language string `json:"language"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			updated, err := userRepo.UpdateLanguage(r.Context(), user.ID, req.Language)
+			if err != nil {
+				http.Error(w, "failed to update language", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"user": updated})
+		})
+		protected.Patch("/api/profile/avatar", func(w http.ResponseWriter, r *http.Request) {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			var req struct {
+				PhotoURL string `json:"photoUrl"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			updated, err := userRepo.UpdatePhotoURL(r.Context(), user.ID, req.PhotoURL)
+			if err != nil {
+				http.Error(w, "failed to update avatar", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"user": updated})
+		})
 		protected.Get("/api/rooms", roomsHandler.List)
 		protected.Get("/api/rooms/{id}", roomsHandler.Get)
 		protected.Post("/api/rooms", roomsHandler.Create)
 		protected.Post("/api/rooms/{id}/join", rateLimit(limiter, "join_room", 20, time.Minute, func(r *http.Request) string {
-			user, _ := customMiddleware.UserFromContext(r.Context())
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				return ""
+			}
 			return user.ID
 		}, roomsHandler.Join))
 		protected.Post("/api/rooms/{id}/ready", roomsHandler.Ready)
+		protected.Post("/api/rooms/{id}/start", roomsHandler.Start)
 		protected.Post("/api/rooms/{id}/leave", roomsHandler.Leave)
+		protected.Post("/api/deposit/create", cryptoPayHandler.CreateDepositInvoice)
+		protected.Post("/api/withdraw/create", cryptoPayHandler.CreateWithdraw(walletService))
+		protected.Post("/api/payments/create", paymentsHandler.CreatePayment)
+		protected.Get("/api/history", historyHandler.List)
+		protected.Get("/api/history/calendar", historyHandler.Calendar)
+		protected.Get("/api/friends", friendsHandler.List)
+		protected.Get("/api/friends/requests", friendsHandler.Requests)
+		protected.Post("/api/friends/request", friendsHandler.Request)
+		protected.Post("/api/friends/accept", friendsHandler.Accept)
 	})
 
+	router.Post("/webhooks/cryptopay", cryptoPayHandler.Webhook)
+	router.Post("/api/wallet/webhook", paymentsHandler.Webhook)
 	router.Get("/ws", wsHandler.ServeWS)
 
 	server := &http.Server{
@@ -168,10 +287,11 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	go scheduler.RunMatchTimers(ctx, gamesService, roomsService, hub)
+	go scheduler.RunMatchTimers(ctx, gamesService, roomsService, hub, wsHandler)
 	go scheduler.RunDisconnectTimeouts(ctx, gamesService, roomsService, hub, walletService, cfg.CommissionBps, cfg.DisableMoney)
 	go scheduler.RunRoomCleanup(ctx, roomsService, cfg.RoomWaitTimeout)
 	go scheduler.RunActiveMatchesReconcile(ctx, gamesService)
+	go scheduler.RunTurnDeadlinesReconcile(ctx, gamesService)
 	go func() {
 		_ = bus.Subscribe(ctx, func(roomID string, event ws.ServerEvent) {
 			hub.Broadcast(roomID, event)
@@ -254,7 +374,11 @@ func cors(origin string) func(http.Handler) http.Handler {
 	}
 }
 
-func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client) http.HandlerFunc {
+func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.HandlerFunc {
+	mode := "money"
+	if cfg.DisableMoney {
+		mode = "test"
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -280,6 +404,7 @@ func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client) http.HandlerFunc
 			"status":   status,
 			"postgres": pgStatus,
 			"redis":    redisStatus,
+			"mode":     mode,
 		})
 	}
 }

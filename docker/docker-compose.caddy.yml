@@ -1,5 +1,6 @@
 # Git workflow: Caddy (auto SSL) + backend + frontend
 # Caddy handles HTTPS automatically, no certbot
+# Run from project root: docker compose -f docker/docker-compose.caddy.yml up -d
 
 services:
   postgres:
@@ -41,17 +42,16 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+    env_file:
+      - ../.env
     environment:
       INSTANCE_ID: "api-1"
       PORT: "8080"
       POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
-      JWT_SECRET: "${JWT_SECRET:-change-me}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      ALLOW_DEV_TELEGRAM_AUTH: "${ALLOW_DEV_TELEGRAM_AUTH:-false}"
-      DISABLE_MONEY: "${DISABLE_MONEY:-false}"
       ROOM_WAIT_TIMEOUT: "5m"
       ALLOWED_ORIGIN: "https://durakonline.duckdns.org"
+      DISABLE_MONEY: "${DISABLE_MONEY:-true}"
     depends_on:
       postgres:
         condition: service_healthy

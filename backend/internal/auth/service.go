@@ -23,9 +23,10 @@ type Service struct {
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 	replayTTL  time.Duration
+	botToken   string
 }
 
-func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL, replayTTL time.Duration) *Service {
+func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL, replayTTL time.Duration, botToken string) *Service {
 	return &Service{
 		users:      usersRepo,
 		redis:      redisClient,
@@ -33,6 +34,7 @@ func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecre
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
 		replayTTL:  replayTTL,
+		botToken:   botToken,
 	}
 }
 
@@ -41,7 +43,11 @@ func (s *Service) ReplayTTL() time.Duration {
 }
 
 func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser) (users.User, string, string, error) {
-	user, err := s.users.GetOrCreateByTelegram(ctx, tgUser.ID, tgUser.Username, tgUser.FirstName, tgUser.LastName, tgUser.PhotoURL)
+	photoURL := tgUser.PhotoURL
+	if photoURL == "" && s.botToken != "" {
+		photoURL = FetchUserPhotoURL(ctx, s.botToken, tgUser.ID)
+	}
+	user, err := s.users.GetOrCreateByTelegram(ctx, tgUser.ID, tgUser.Username, tgUser.FirstName, tgUser.LastName, photoURL)
 	if err != nil {
 		return users.User{}, "", "", err
 	}

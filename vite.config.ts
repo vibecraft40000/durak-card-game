@@ -18,20 +18,20 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost:8090",
+        target: process.env.VITE_PROXY_TARGET || "http://localhost:8080",
         changeOrigin: true,
       },
       "/auth": {
-        target: "http://localhost:8090",
+        target: process.env.VITE_PROXY_TARGET || "http://localhost:8080",
         changeOrigin: true,
       },
       "/ws": {
-        target: "ws://localhost:8090",
+        target: (process.env.VITE_PROXY_TARGET || "http://localhost:8080").replace(/^http/, "ws"),
         ws: true,
         changeOrigin: true,
       },
       "/health": {
-        target: "http://localhost:8090",
+        target: process.env.VITE_PROXY_TARGET || "http://localhost:8080",
         changeOrigin: true,
       },
     },

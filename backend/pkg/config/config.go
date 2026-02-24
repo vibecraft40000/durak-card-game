@@ -23,6 +23,11 @@ type Config struct {
 	RoomWaitTimeout      time.Duration
 	CommissionBps        int
 	AllowedOrigin        string
+	Env                  string // production, development, test
+	CryptoPayAPIToken    string
+	CryptoPayTestnet     bool
+	WalletPayAPIKey      string
+	WalletPayWebhookPath string
 }
 
 func Load() Config {
@@ -43,6 +48,11 @@ func Load() Config {
 		RoomWaitTimeout:      getDuration("ROOM_WAIT_TIMEOUT", 5*time.Minute),
 		CommissionBps:        getInt("COMMISSION_BPS", 300),
 		AllowedOrigin:        getEnv("ALLOWED_ORIGIN", "*"),
+		Env:                  getEnv("ENV", "development"),
+		CryptoPayAPIToken:    getEnv("CRYPTO_PAY_API_TOKEN", ""),
+		CryptoPayTestnet:     getBool("CRYPTO_PAY_TESTNET", false),
+		WalletPayAPIKey:      getEnv("WALLET_PAY_API_KEY", ""),
+		WalletPayWebhookPath: getEnv("WALLET_PAY_WEBHOOK_PATH", "/api/wallet/webhook"),
 	}
 }
 

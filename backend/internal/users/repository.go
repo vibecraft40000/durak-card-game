@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"durakonline/backend/pkg/metrics"
@@ -18,6 +19,7 @@ type User struct {
 	PhotoURL     string    `json:"photo_url"`
 	DisplayName  string    `json:"display_name"`
 	Currency     string    `json:"currency"`
+	Language     string    `json:"language"`
 	ReferralCode string    `json:"referral_code"`
 	InvitedBy    *string   `json:"invited_by,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -53,17 +55,12 @@ DO UPDATE SET
     first_name = EXCLUDED.first_name,
     last_name = EXCLUDED.last_name,
     photo_url = EXCLUDED.photo_url,
-    display_name = CASE
-        WHEN users.display_name = '' THEN EXCLUDED.display_name
-        ELSE users.display_name
-    END,
+    display_name = EXCLUDED.display_name,
     updated_at = NOW()
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
 
-	displayName := firstName
-	if username != "" {
-		displayName = "@" + username
-	}
+	// Ник = Имя Фамилия (не @username), обновляется при каждом входе
+	displayName := strings.TrimSpace(firstName + " " + lastName)
 	if displayName == "" {
 		displayName = "Игрок"
 	}
@@ -79,6 +76,7 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 		&user.PhotoURL,
 		&user.DisplayName,
 		&user.Currency,
+		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
 		&user.CreatedAt,
@@ -91,11 +89,32 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 	return user, nil
 }
 
+func (r *Repository) ResolveID(ctx context.Context, idOrUsername string) (string, bool) {
+	// If it looks like UUID, try GetByID
+	if len(idOrUsername) == 36 && idOrUsername[8] == '-' {
+		u, ok := r.GetByID(ctx, idOrUsername)
+		if ok {
+			return u.ID, true
+		}
+		return "", false
+	}
+	// Try by username (with or without @)
+	uname := strings.TrimPrefix(idOrUsername, "@")
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var id string
+	err := r.db.QueryRow(ctx, `SELECT id FROM users WHERE username = $1 OR username = $2`, uname, idOrUsername).Scan(&id)
+	if err != nil {
+		return "", false
+	}
+	return id, true
+}
+
 func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, referral_code, invited_by, created_at, updated_at FROM users WHERE id=$1`
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at FROM users WHERE id=$1`
 	var user User
 	start := time.Now()
 	err := r.db.QueryRow(ctx, query, id).Scan(
@@ -107,6 +126,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 		&user.PhotoURL,
 		&user.DisplayName,
 		&user.Currency,
+		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
 		&user.CreatedAt,
@@ -130,7 +150,7 @@ SET
     currency = COALESCE(NULLIF($3, ''), currency),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
 
 	var user User
 	start := time.Now()
@@ -143,12 +163,55 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 		&user.PhotoURL,
 		&user.DisplayName,
 		&user.Currency,
+		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
 	metrics.ObserveDBQuery("update_user_settings", start)
+	if err != nil {
+		return User{}, err
+	}
+	return user, nil
+}
+
+func (r *Repository) UpdateLanguage(ctx context.Context, id, language string) (User, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	valid := map[string]bool{"ru": true, "uk": true, "en": true}
+	if !valid[language] {
+		language = "ru"
+	}
+	query := `UPDATE users SET language = $2, updated_at = NOW() WHERE id = $1
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, language, referral_code, invited_by, created_at, updated_at`
+	var user User
+	start := time.Now()
+	err := r.db.QueryRow(ctx, query, id, language).Scan(
+		&user.ID, &user.TelegramID, &user.Username, &user.FirstName, &user.LastName,
+		&user.PhotoURL, &user.DisplayName, &user.Currency, &user.Language,
+		&user.ReferralCode, &user.InvitedBy, &user.CreatedAt, &user.UpdatedAt,
+	)
+	metrics.ObserveDBQuery("update_user_language", start)
+	if err != nil {
+		return User{}, err
+	}
+	return user, nil
+}
+
+func (r *Repository) UpdatePhotoURL(ctx context.Context, id, photoURL string) (User, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	query := `UPDATE users SET photo_url = $2, updated_at = NOW() WHERE id = $1
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
+	var user User
+	start := time.Now()
+	err := r.db.QueryRow(ctx, query, id, photoURL).Scan(
+		&user.ID, &user.TelegramID, &user.Username, &user.FirstName, &user.LastName,
+		&user.PhotoURL, &user.DisplayName, &user.Currency, &user.Language,
+		&user.ReferralCode, &user.InvitedBy, &user.CreatedAt, &user.UpdatedAt,
+	)
+	metrics.ObserveDBQuery("update_user_photo_url", start)
 	if err != nil {
 		return User{}, err
 	}

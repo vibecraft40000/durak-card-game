@@ -125,6 +125,23 @@ func (h *Handler) Leave(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"room": room, "ok": true})
 }
 
+func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "id")
+	room, err := h.service.StartGame(r.Context(), roomID, user.ID)
+	if err != nil {
+		log.Printf("startGame failed room_id=%s user_id=%s err=%v", roomID, user.ID, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log.Printf("startGame ok room_id=%s user_id=%s match_id=%s", roomID, user.ID, room.MatchID)
+	writeJSON(w, http.StatusOK, map[string]any{"room": room, "ok": true})
+}
+
 func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {

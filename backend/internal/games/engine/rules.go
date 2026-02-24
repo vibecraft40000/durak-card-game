@@ -96,6 +96,7 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 	}
 
 	maybeFinish(state)
+	state.Version++
 	state.TurnEndsAt = time.Now().Add(turnTTL).UTC()
 	state.LastActionAt = time.Now().UTC()
 	return nil
@@ -123,6 +124,7 @@ func maybeFinish(state *GameState) {
 func ForceFinishWithWinner(state *GameState, winnerID string) {
 	state.Status = StatusFinished
 	state.WinnerPlayer = winnerID
+	state.Version++
 }
 
 func popCard(hand *[]Card, cardID string) (Card, bool) {

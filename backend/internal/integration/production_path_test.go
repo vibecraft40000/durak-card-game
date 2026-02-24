@@ -81,11 +81,11 @@ func TestDoubleMoveProtection(t *testing.T) {
 	errs := make([]error, 2)
 	go func() {
 		defer wg.Done()
-		_, errs[0] = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID)
+		_, _, errs[0] = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID, nil, "")
 	}()
 	go func() {
 		defer wg.Done()
-		_, errs[1] = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID)
+		_, _, errs[1] = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID, nil, "")
 	}()
 	wg.Wait()
 
@@ -144,7 +144,7 @@ func integrationDeps(t *testing.T) (*pgxpool.Pool, *redis.Client) {
 
 func resetData(t *testing.T, ctx context.Context, pg *pgxpool.Pool) {
 	t.Helper()
-	_, err := pg.Exec(ctx, `TRUNCATE transactions, match_players, matches, users, game_history RESTART IDENTITY CASCADE`)
+	_, err := pg.Exec(ctx, `TRUNCATE transactions, game_results, match_players, matches, users, game_history RESTART IDENTITY CASCADE`)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("truncate tables: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestReconnectVsMakeMoveRace(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, _ = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID)
+			_, _, _ = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID, nil, "")
 		}()
 		go func() {
 			defer wg.Done()
@@ -207,7 +207,7 @@ func TestReconnectFlow(t *testing.T) {
 	if err := gamesSvc.ClearDisconnected(ctx, matchID, "p2"); err != nil {
 		t.Fatalf("clear disconnected: %v", err)
 	}
-	next, err := gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID)
+	next, _, err := gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID, nil, "")
 	if err != nil {
 		t.Fatalf("apply after reconnect: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestDisconnectVsAbandonRace(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, _ = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID)
+			_, _, _ = gamesSvc.Apply(ctx, matchID, "p1", engine.ActionAttack, cardID, nil, "")
 		}()
 	}
 	wg.Wait()

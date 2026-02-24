@@ -198,6 +198,25 @@ export function MoonIcon(props: IconProps) {
 }
 
 /** Sun icon (light theme) */
+/** Close (X) for modal */
+export function CloseIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </IconBase>
+  );
+}
+
+/** Crypto Bot: light blue circle with white V (like Telegram) */
+export function CryptoBotIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <circle cx="12" cy="12" r="11" fill="#2AABEE" />
+      <path d="M7 8l5 8 5-8" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </IconBase>
+  );
+}
+
 export function SunIcon(props: IconProps) {
   return (
     <IconBase {...props}>

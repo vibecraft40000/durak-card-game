@@ -72,6 +72,12 @@
   --button-ghost-min-height: 36px;
   --icon-button-size: 44px;
 
+  /* Playing card face (light face for readability) */
+  --color-card-red: #cc2f57;
+  --color-card-dark: #19265f;
+  --color-card-back-start: #2a3e9e;
+  --color-card-back-end: #1a2a79;
+
   /* Game table (Figma: Table Cards 60x80, My Cards 90x120; hand scaled for mobile) */
   --card-width: 52px;
   --card-height: 68px;
@@ -80,6 +86,18 @@
   --card-table-height: 80px;
   --table-min-height: 112px;
   --table-padding: var(--space-16);
+
+  /* Table surface (felt-style card table) */
+  --color-table-felt: linear-gradient(135deg, #1a3d2e 0%, #0d261a 50%, #0a1f16 100%);
+  --color-table-border: rgba(45, 90, 65, 0.6);
+  --shadow-table-inner: inset 0 2px 12px rgba(0, 0, 0, 0.3);
+
+  /* Animation spec (Figma / top mobile games) */
+  --shadow-card-idle: 0 6px 20px rgba(0, 0, 0, 0.35);
+  --shadow-card-hover: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-card-drag: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --shadow-table-glow: 0 0 40px rgba(255, 200, 0, 0.4);
+  --space-fan-spread: 36deg;
 }
 
 /* Light (white) theme */
@@ -107,4 +125,8 @@
   --color-btn-deposit-hover: linear-gradient(180deg, #4dd85c 0%, #27ae60 100%);
   --color-btn-withdraw: linear-gradient(180deg, #f8b4b4 0%, #f08080 100%);
   --color-btn-withdraw-hover: linear-gradient(180deg, #f08080 0%, #e74c3c 100%);
+
+  /* Light theme table */
+  --color-table-felt: linear-gradient(135deg, #2d5a3f 0%, #1e3d2b 50%, #163024 100%);
+  --color-table-border: rgba(60, 120, 80, 0.5);
 }

@@ -8,36 +8,23 @@ import { AppCard } from "@/shared/ui/Card";
 import { AppAvatar } from "@/shared/ui/Avatar";
 import { AppButton } from "@/shared/ui/Button";
 
-const CURRENCIES = ["USD", "RUB", "UAH"] as const;
-type Currency = (typeof CURRENCIES)[number];
+const CURRENCY = "USD" as const;
 
 export function ProfilePage() {
   const { theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [balance, setBalance] = useState(0);
-  const [currencySaving, setCurrencySaving] = useState(false);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [profileError, setProfileError] = useState(false);
 
   useEffect(() => {
+    setProfileError(false);
     void getProfile()
       .then((response) => {
         setUser(response.user);
         setBalance(response.balance);
       })
-      .catch(() => undefined);
+      .catch(() => setProfileError(true));
   }, []);
-
-  const currency = (user?.currency ?? "USD") as Currency;
-
-  async function changeCurrency(next: Currency) {
-    if (next === currency || currencySaving) return;
-    setCurrencySaving(true);
-    try {
-      await patchUserSettings({ currency: next });
-      setUser((prev) => (prev ? { ...prev, currency: next } : null));
-    } finally {
-      setCurrencySaving(false);
-    }
-  }
 
   const fullName =
     user?.display_name ||
@@ -68,37 +55,38 @@ export function ProfilePage() {
       <AppCard variant="balance" className="profile-balance">
         <div className="card__row profile-balance__top">
           <div className="profile-balance__value">
-            {Number.isFinite(balance) ? `${balance.toFixed(3)} ${currency}` : `0.000 ${currency}`}
-          </div>
-        </div>
-        <div className="profile-balance__currency-row">
-          <div className="currency-selector">
-            {CURRENCIES.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`currency-selector__item ${currency === c ? "currency-selector__item--active" : ""}`}
-                onClick={() => void changeCurrency(c)}
-                disabled={currencySaving}
-              >
-                {c}
-              </button>
-            ))}
+            {profileError
+              ? `Ошибка загрузки — ${CURRENCY}`
+              : balance != null && Number.isFinite(balance)
+                ? `${balance.toFixed(3)} ${CURRENCY}`
+                : `— ${CURRENCY}`}
           </div>
         </div>
         <div className="profile-balance__actions">
-          <AppButton variant="deposit" type="button">
+          <Link
+            to="/profile/deposit"
+            className="button button--deposit"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textDecoration: "none", color: "inherit" }}
+          >
             <DepositIcon size={18} />
             Пополнение
-          </AppButton>
-          <AppButton variant="withdraw" type="button">
+          </Link>
+          <Link
+            to="/profile/withdraw"
+            className="button button--withdraw"
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textDecoration: "none", color: "inherit" }}
+          >
             <WithdrawIcon size={18} />
             Вывод
-          </AppButton>
+          </Link>
         </div>
       </AppCard>
 
       <div className="list">
+        <Link className="menu-item" to="/profile/deposit">
+          <span>Пополнение (Crypto Bot)</span>
+          <ChevronRightIcon size={16} />
+        </Link>
         <Link className="menu-item" to="/profile/friends">
           <span>Друзья</span>
           <ChevronRightIcon size={16} />
@@ -114,6 +102,7 @@ export function ProfilePage() {
           <ChevronRightIcon size={16} />
         </Link>
       </div>
+
     </section>
   );
 }

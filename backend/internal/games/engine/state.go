@@ -47,6 +47,7 @@ const (
 type GameState struct {
 	MatchID      string                 `json:"match_id"`
 	Status       GameStatus             `json:"status"`
+	Version      int64                  `json:"version"`
 	Deck         []Card                 `json:"deck"`
 	Trump        Suit                   `json:"trump"`
 	AttackerID   string                 `json:"attacker"`
@@ -67,25 +68,34 @@ var ranks = []string{"6", "7", "8", "9", "10", "J", "Q", "K", "A"}
 var suits = []Suit{Hearts, Diamonds, Clubs, Spades}
 
 func NewGameState(matchID string, players []string, turnTTL time.Duration) GameState {
+	return newGameStateWithSource(matchID, players, turnTTL, rand.NewSource(time.Now().UnixNano()))
+}
+
+// NewGameStateDeterministic creates a game state with seeded RNG for deterministic tests.
+func NewGameStateDeterministic(matchID string, players []string, turnTTL time.Duration, seed int64) GameState {
+	return newGameStateWithSource(matchID, players, turnTTL, rand.NewSource(seed))
+}
+
+func newGameStateWithSource(matchID string, players []string, turnTTL time.Duration, source rand.Source) GameState {
 	deck := buildDeck()
-	rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(deck), func(i, j int) {
+	rand.New(source).Shuffle(len(deck), func(i, j int) {
 		deck[i], deck[j] = deck[j], deck[i]
 	})
 
-	hands := make(map[string][]Card, len(players))
-	for _, playerID := range players {
-		hands[playerID] = []Card{}
-	}
-
-	dealCardsInOrder(players, hands, &deck, 6)
 	attacker := players[0]
 	defender := players[1]
 	trump := deck[len(deck)-1].Suit
 
 	now := time.Now().UTC()
+	hands := make(map[string][]Card, len(players))
+	for _, playerID := range players {
+		hands[playerID] = []Card{}
+	}
+	dealCardsInOrder(players, hands, &deck, 6)
 	return GameState{
 		MatchID:      matchID,
 		Status:       StatusPlaying,
+		Version:      1,
 		Deck:         deck,
 		StartedAt:    now,
 		Trump:        trump,

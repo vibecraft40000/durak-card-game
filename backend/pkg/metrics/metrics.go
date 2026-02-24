@@ -71,6 +71,14 @@ var (
 		Name: "room_cancelled_total",
 		Help: "Rooms cancelled (stale timeout).",
 	})
+	versionMismatchTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "version_mismatch_total",
+		Help: "make_move rejected due to version mismatch.",
+	})
+	timeoutAppliedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "timeout_applied_total",
+		Help: "Turn timeouts auto-applied.",
+	})
 )
 
 func Handler() http.Handler {
@@ -123,6 +131,14 @@ func IncGameFinishReason(reason string) {
 
 func IncRoomCancelled() {
 	roomCancelledTotal.Inc()
+}
+
+func IncVersionMismatch() {
+	versionMismatchTotal.Inc()
+}
+
+func IncTimeoutApplied() {
+	timeoutAppliedTotal.Inc()
 }
 
 func HTTPMiddleware(next http.Handler) http.Handler {

@@ -14,6 +14,9 @@ durakonline.duckdns.org, www.durakonline.duckdns.org {
     handle /health {
         reverse_proxy api:8080
     }
+    handle /webhooks/* {
+        reverse_proxy api:8080
+    }
     handle {
         try_files {path} {path}/ /index.html
         file_server

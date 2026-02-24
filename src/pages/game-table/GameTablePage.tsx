@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { applyMockMatchAction, isMockApiEnabled } from "@/mocks/mockApi";
 import type { MatchActionType, Room } from "@/entities/match/types";
 import { joinGameRoom } from "@/processes/joinGame.process";
-import { getRoom } from "@/shared/api/rooms";
+import { getRoom, leaveRoom } from "@/shared/api/rooms";
+import { getProfile } from "@/shared/api/user";
 import {
-  getTelegramUser,
   hapticImpact,
   hapticNotification,
   hapticSelection,
@@ -14,8 +15,21 @@ import { wsClient } from "@/shared/api/ws/socket";
 import { AppAvatar } from "@/shared/ui/Avatar";
 import { BackIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
+import { PlayingCard } from "@/shared/ui/PlayingCard";
 import { AppButton } from "@/shared/ui/Button";
+import { ReconnectOverlay } from "@/shared/ui/ReconnectOverlay";
 import { CardSkeleton, ConfirmModal, EmptyStateBlock } from "@/shared/ui/StateBlocks";
+import { formatActivityItem } from "@/entities/game/lib/formatActivity";
+import { PlayerHandFan } from "@/features/game/PlayerHandFan";
+import {
+  selectCanAct,
+  selectCanAttack,
+  selectCanDefend,
+  selectCanPass,
+  selectCanTake,
+  selectIsMyTurn,
+} from "@/entities/game/model/selectors";
+import { useSwipeDown } from "@/shared/hooks/useSwipeDown";
 import {
   addActivity,
   clearGameError,
@@ -34,9 +48,28 @@ export function GameTablePage() {
   const [isExitModalOpen, setIsExitModalOpen] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
-  const telegramUser = getTelegramUser();
-  const currentUserId = telegramUser?.id ? String(telegramUser.id) : null;
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [profileBalance, setProfileBalance] = useState<number | null>(null);
+  const currency = "USD";
+  const tableZoneRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    void getProfile()
+      .then((r) => {
+        setCurrentUserId(r.user.id);
+        setProfileBalance(r.balance);
+      })
+      .catch(() => undefined);
+  }, []);
+
   const matchState = gameState.matchState;
+  useEffect(() => {
+    if (matchState?.status === "finished") {
+      void getProfile()
+        .then((r) => setProfileBalance(r.balance))
+        .catch(() => undefined);
+    }
+  }, [matchState?.status]);
   const players = matchState?.players ?? [];
   const currentPlayer = useMemo(
     () => players.find((player) => player.id === currentUserId) ?? players[0],
@@ -47,23 +80,44 @@ export function GameTablePage() {
     [currentPlayer?.id, players],
   );
   const hasDetailedHand = Boolean(currentPlayer?.hand?.length);
-  const isMyTurn = useMemo(() => {
-    if (!matchState || !currentPlayer) {
-      return false;
-    }
-    if (matchState.turnPlayerId) {
-      return matchState.turnPlayerId === currentPlayer.id;
-    }
-    return currentPlayer.isCurrentTurn;
-  }, [currentPlayer, matchState]);
-  const canAct = gameState.status === "ready" && matchState?.status === "playing" && isMyTurn;
+  const isMyTurn = useMemo(
+    () => selectIsMyTurn(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
+  const canAct = useMemo(
+    () => selectCanAct(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
+  const canTake = useMemo(
+    () => selectCanTake(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
+  const canDefend = useMemo(
+    () => selectCanDefend(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
+  const canAttack = useMemo(
+    () => selectCanAttack(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
+  const canPass = useMemo(
+    () => selectCanPass(gameState, currentUserId),
+    [gameState, currentUserId],
+  );
   const tablePairs = useMemo(() => buildTablePairs(matchState?.tableCards ?? []), [matchState?.tableCards]);
   const winnerName = useMemo(() => {
     if (!matchState?.winnerPlayerId) {
       return null;
     }
-    return players.find((player) => player.id === matchState.winnerPlayerId)?.username ?? "Игрок";
+    const winner = players.find((player) => player.id === matchState.winnerPlayerId);
+    return winner?.displayName ?? winner?.username ?? "Игрок";
   }, [matchState?.winnerPlayerId, players]);
+
+  const turnPlayerName = useMemo(() => {
+    if (!matchState?.turnPlayerId) return null;
+    const p = players.find((x) => x.id === matchState.turnPlayerId);
+    return p?.displayName ?? p?.username ?? "Игрок";
+  }, [matchState?.turnPlayerId, players]);
   const isWinner = matchState?.winnerPlayerId && currentPlayer
     ? matchState.winnerPlayerId === currentPlayer.id
     : false;
@@ -112,11 +166,19 @@ export function GameTablePage() {
     return () => window.clearInterval(interval);
   }, [matchState?.status, matchState?.turnEndsAt, matchState?.turnPlayerId]);
 
-  function sendAction(action: MatchActionType) {
-    if (!id) {
+  const interactionLocked = gameState.interactionLocked ?? false;
+  const swipeTake = useSwipeDown(() => {
+    if (canTake && !interactionLocked) {
+      hapticImpact("medium");
+      sendAction("take");
+    }
+  });
+
+  function sendAction(action: MatchActionType, cardIdOverride?: string) {
+    if (!id || interactionLocked) {
       return;
     }
-    const cardId = selectedCardId ?? undefined;
+    const cardId = cardIdOverride ?? selectedCardId ?? undefined;
     if (isMockApiEnabled()) {
       const next = applyMockMatchAction({ roomId: id, action, cardId });
       setMatchState(next);
@@ -128,11 +190,20 @@ export function GameTablePage() {
     }
     const selectedCard =
       action === "attack" || action === "defend" ? { cardId } : {};
+    const expectedVersion =
+      matchState?.version != null ? { expectedVersion: matchState.version } : {};
+    const actionId = crypto.randomUUID();
 
     hapticImpact("medium");
     wsClient.send({
       type: "make_move",
-      payload: { roomId: id, action: toWireAction(action), ...selectedCard },
+      payload: {
+        roomId: id,
+        action: toWireAction(action),
+        ...selectedCard,
+        ...expectedVersion,
+        actionId,
+      },
     });
     if (action === "attack" || action === "defend") {
       setSelectedCardId(null);
@@ -141,10 +212,29 @@ export function GameTablePage() {
 
   return (
     <section className="screen game-table-screen">
+      <ReconnectOverlay />
+      {interactionLocked && (
+        <div className="reconnect-overlay" role="status" aria-live="polite">
+          <div className="reconnect-overlay__content">
+            <p className="reconnect-overlay__text">Синхронизация…</p>
+          </div>
+        </div>
+      )}
       <div className="page-header">
-        <Link className="icon-button" to="/play">
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Назад"
+          onClick={() => {
+            if (matchState?.status === "playing") {
+              setIsExitModalOpen(true);
+            } else {
+              navigate("/play");
+            }
+          }}
+        >
           <BackIcon size={17} />
-        </Link>
+        </button>
         <h1 className="page-header__title">Игровой стол</h1>
         <div className="page-header__spacer" />
       </div>
@@ -194,54 +284,79 @@ export function GameTablePage() {
                 <span>${room.stakeUsd}</span>
               </div>
               <div className="game-board__meta">
-                <span className="game-board__trump">
+                <div className="game-board__trump">
                   {matchState?.trumpCard ? (
-                    <span className={`playing-card playing-card--mini ${getSuitClass(matchState.trumpCard.suit)}`}>
-                      {matchState.trumpCard.rank}{getSuitSymbol(matchState.trumpCard.suit)}
-                    </span>
+                    <PlayingCard
+                      rank={matchState.trumpCard.rank}
+                      suit={matchState.trumpCard.suit}
+                      variant="mini"
+                    />
                   ) : (
                     formatSuit(matchState?.trumpSuit)
                   )}
-                </span>
+                </div>
                 <span>{secondsLeft !== null ? `${secondsLeft}с` : "..."}</span>
               </div>
             </div>
 
             <div className="game-board__opponents">
-              {opponents.slice(0, 3).map((player, index) => (
-                <div className="game-opponent" key={player.id}>
+              {opponents.slice(0, 4).map((player, index) => (
+                <div
+                  className={`game-opponent ${matchState?.turnPlayerId === player.id ? "game-opponent--turn" : ""} ${matchState?.turnPlayerId === player.id && secondsLeft != null && secondsLeft <= 5 ? "game-opponent--urgent" : ""}`}
+                  key={player.id}
+                >
                   <AppAvatar
-                    name={player.username || `player-${index + 1}`}
-                    photoUrl={(player as { photo_url?: string }).photo_url}
+                    name={player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                    photoUrl={player.photoUrl}
                     className="game-opponent__avatar"
                   />
-                  <div className="game-opponent__name">@{player.username || `player-${index + 1}`}</div>
-                  <div className="game-opponent__cards">{player.handCount}</div>
+                  <div className="game-opponent__name">
+                    {player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                  </div>
+                  <div className="game-opponent__cards" title="Карт на руке">
+                    {player.handCount}
+                  </div>
                 </div>
               ))}
             </div>
 
-            <div className="game-board__table">
+            <div
+              ref={tableZoneRef}
+              className="game-board__table"
+              {...(canTake && !interactionLocked ? swipeTake : {})}
+            >
               {tablePairs.length ? (
-                <div className="table-pairs">
+                <motion.div layout className="table-pairs">
                   {tablePairs.map((pair, index) => (
                     <div className="table-pairs__item" key={`pair-${index}`}>
-                      <CardFace suit={pair.attack.suit} rank={pair.attack.rank} />
+                      <PlayingCard
+                        suit={pair.attack.suit}
+                        rank={pair.attack.rank}
+                        variant="table"
+                      />
                       {pair.defense ? (
-                        <CardFace suit={pair.defense.suit} rank={pair.defense.rank} />
+                        <PlayingCard
+                          suit={pair.defense.suit}
+                          rank={pair.defense.rank}
+                          variant="table"
+                        />
                       ) : (
-                        <div className="playing-card playing-card--placeholder" />
+                        <PlayingCard placeholder variant="table" />
                       )}
                     </div>
                   ))}
-                </div>
+                </motion.div>
               ) : (
-                <div className="card__hint card__hint--center">Стол пока пуст</div>
+                <div className="game-board__table-empty">Стол пока пуст</div>
               )}
             </div>
 
             <div className="game-board__turn">
-              {isMyTurn ? "Ваш ход" : "Ход соперника"}
+              {isMyTurn
+                ? "Ваш ход"
+                : turnPlayerName
+                  ? `Ход: ${turnPlayerName}`
+                  : "Ход соперника"}
               {gameState.error && <span className="game-board__error"> · {gameState.error}</span>}
             </div>
             {gameState.reconnectingPlayerId && gameState.reconnectingPlayerId !== currentUserId && (
@@ -252,30 +367,57 @@ export function GameTablePage() {
           </AppCard>
 
           <AppCard className="hand-zone">
+            <div className="hand-zone__header">
+              <div
+                className={`game-opponent game-opponent--me ${isMyTurn ? "game-opponent--turn" : ""} ${isMyTurn && secondsLeft != null && secondsLeft <= 5 ? "game-opponent--urgent" : ""}`}
+              >
+                <AppAvatar
+                  name={currentPlayer?.displayName ?? currentPlayer?.username ?? "Вы"}
+                  photoUrl={currentPlayer?.photoUrl}
+                  className="game-opponent__avatar"
+                />
+                <span className="game-opponent__name">Вы</span>
+                {currentPlayer && (
+                  <div className="game-opponent__cards">{currentPlayer.handCount}</div>
+                )}
+              </div>
+            </div>
             <div className="card__label">Ваши карты</div>
             {currentPlayer?.handCount ? (
-              <div className="cards-grid cards-grid--hand">
-                {hasDetailedHand
-                  ? currentPlayer.hand?.map((card) => (
-                      <button
-                        className={`playing-card ${getSuitClass(card.suit)} ${
-                          selectedCardId === card.id ? "playing-card--selected" : ""
-                        }`}
-                        key={card.id}
-                        type="button"
-                        onClick={() => {
-                          hapticSelection();
-                          setSelectedCardId(card.id);
-                        }}
-                      >
-                        <span>{card.rank}</span>
-                        <span>{getSuitSymbol(card.suit)}</span>
-                      </button>
-                    ))
-                  : Array.from({ length: currentPlayer.handCount }).map((_, index) => (
-                      <div className="playing-card playing-card--back" key={`back-${index}`} />
-                    ))}
-              </div>
+              hasDetailedHand && !isMockApiEnabled() ? (
+                <PlayerHandFan
+                  cards={currentPlayer.hand ?? []}
+                  matchState={matchState}
+                  currentUserId={currentUserId}
+                  canAct={canAct && !interactionLocked}
+                  interactionLocked={interactionLocked}
+                  tableRectRef={tableZoneRef}
+                  onPlayCard={(cardId, action) => {
+                    sendAction(action === "attack" ? "attack" : "defend", cardId);
+                  }}
+                />
+              ) : (
+                <div className="cards-grid cards-grid--hand">
+                  {hasDetailedHand
+                    ? currentPlayer.hand?.map((card) => (
+                        <PlayingCard
+                          key={card.id}
+                          rank={card.rank}
+                          suit={card.suit}
+                          variant="hand"
+                          selected={selectedCardId === card.id}
+                          interactive
+                          onClick={() => {
+                            hapticSelection();
+                            setSelectedCardId(card.id);
+                          }}
+                        />
+                      ))
+                    : Array.from({ length: currentPlayer.handCount }).map((_, index) => (
+                        <PlayingCard key={`back-${index}`} faceUp={false} variant="hand" />
+                      ))}
+                </div>
+              )
             ) : (
               <div className="card__hint">Карт на руке нет</div>
             )}
@@ -283,31 +425,36 @@ export function GameTablePage() {
 
           <AppCard className="game-actions">
             <div className="action-list action-list--inline">
-              <AppButton
-                variant="primary"
-                type="button"
-                onClick={() => sendAction("take")}
-                disabled={!canAct}
+              <div
+                className="action-take-wrap"
+                {...(canTake && !interactionLocked ? swipeTake : {})}
               >
-                Беру
-              </AppButton>
+                <AppButton
+                  variant="primary"
+                  type="button"
+                  onClick={() => sendAction("take")}
+                  disabled={!canTake || interactionLocked}
+                >
+                  Беру
+                </AppButton>
+              </div>
               <AppButton
                 type="button"
                 onClick={() => sendAction("defend")}
-                disabled={!canAct || (hasDetailedHand && !selectedCardId)}
+                disabled={!canDefend || interactionLocked || (hasDetailedHand && !selectedCardId)}
               >
                 Бью
               </AppButton>
               <AppButton
                 type="button"
                 onClick={() => sendAction("attack")}
-                disabled={!canAct || (hasDetailedHand && !selectedCardId)}
+                disabled={!canAttack || interactionLocked || (hasDetailedHand && !selectedCardId)}
               >
                 Подкинуть
               </AppButton>
             </div>
             <div className="game-actions__secondary">
-              <AppButton type="button" onClick={() => sendAction("pass")} disabled={!canAct}>
+              <AppButton type="button" onClick={() => sendAction("pass")} disabled={!canPass || interactionLocked}>
                 Пас
               </AppButton>
               <Link className="button" to={`/game/${id}/friends`}>
@@ -317,16 +464,34 @@ export function GameTablePage() {
                 Выйти
               </AppButton>
             </div>
-            <div className="game-actions__balance">Ваш баланс: ${room.stakeUsd * 3}</div>
+            <div className="game-actions__balance">
+              Ваш баланс:{" "}
+              {(() => {
+                const fromNewBalances =
+                  currentUserId && gameState.matchResult?.newBalances?.[currentUserId];
+                const bal =
+                  fromNewBalances != null ? fromNewBalances : profileBalance;
+                return typeof bal === "number"
+                  ? `${bal.toFixed(3)} ${currency}`
+                  : `— ${currency}`;
+              })()}
+            </div>
           </AppCard>
 
           <AppCard>
             <div className="card__label">Лог событий</div>
             {gameState.activity.length ? (
               <div className="list">
-                {gameState.activity.slice(-5).map((item, index) => (
-                  <div className="card__hint" key={`${item}-${index}`}>
-                    {item}
+                {gameState.activity.slice(-10).map((item, index) => (
+                  <div
+                    className="card__hint"
+                    key={
+                      item.type === "move"
+                        ? item.eventId ?? `m-${index}`
+                        : `s-${item.timestamp}-${index}`
+                    }
+                  >
+                    {formatActivityItem(item, players)}
                   </div>
                 ))}
               </div>
@@ -362,42 +527,31 @@ export function GameTablePage() {
 
       <ConfirmModal
         isOpen={isExitModalOpen}
-        title="Покинуть текущую игру?"
-        message="Если выйти сейчас, вы можете потерять ставку и место за столом."
-        confirmLabel="Выйти"
-        onConfirm={() => navigate("/play")}
+        title="Выйти из игры?"
+        message="Вы покинули активную игру. Вернуться?"
+        cancelLabel="Вернуться"
+        confirmLabel="Покинуть"
         onCancel={() => setIsExitModalOpen(false)}
+        onConfirm={() => {
+          if (id) {
+            void leaveRoom(id).then(() => navigate("/play")).catch(() => navigate("/play"));
+          } else {
+            navigate("/play");
+          }
+        }}
       />
     </section>
   );
 }
 
-function CardFace({ suit, rank }: { suit: string; rank: string }) {
-  return (
-    <button className={`playing-card ${getSuitClass(suit)}`} type="button">
-      <span>{rank}</span>
-      <span>{getSuitSymbol(suit)}</span>
-    </button>
-  );
-}
-
 function getSuitSymbol(suit: string) {
-  switch (suit) {
-    case "hearts":
-      return "♥";
-    case "diamonds":
-      return "♦";
-    case "clubs":
-      return "♣";
-    case "spades":
-      return "♠";
-    default:
-      return "?";
-  }
-}
-
-function getSuitClass(suit: string) {
-  return suit === "hearts" || suit === "diamonds" ? "playing-card--red" : "playing-card--dark";
+  const symbols: Record<string, string> = {
+    hearts: "♥",
+    diamonds: "♦",
+    clubs: "♣",
+    spades: "♠",
+  };
+  return symbols[suit] ?? "?";
 }
 
 function formatSuit(suit?: string) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"slices"
 	"strings"
@@ -17,9 +18,12 @@ import (
 )
 
 var (
-	ErrRoomNotFound = errors.New("room not found")
-	ErrRoomFull     = errors.New("room full")
-	ErrNeedOpponent = errors.New("waiting for opponent")
+	ErrRoomNotFound    = errors.New("room not found")
+	ErrRoomFull        = errors.New("room full")
+	ErrNeedOpponent    = errors.New("waiting for opponent")
+	ErrNotRoomCreator  = errors.New("only room creator can start the game")
+	ErrNotAllReady     = errors.New("wait for all players to confirm")
+	ErrStartInProgress = errors.New("match start already in progress")
 )
 
 type Service struct {
@@ -68,7 +72,9 @@ func (s *Service) Join(ctx context.Context, roomID string, userID string) (Room,
 			}
 			room.Players = append(room.Players, userID)
 		}
-		_ = s.repo.Save(ctx, room)
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
 		return room, nil
 	})
 }
@@ -84,40 +90,91 @@ func (s *Service) Ready(ctx context.Context, roomID string, userID string) (Room
 			if !slices.Contains(room.Players, botID) {
 				room.Players = append(room.Players, botID)
 			}
-			if !slices.Contains(room.ReadyUsers, botID) {
-				room.ReadyUsers = append(room.ReadyUsers, botID)
-			}
+			_ = s.repo.AddReadyUser(ctx, roomID, botID)
 		}
-		if !slices.Contains(room.ReadyUsers, userID) {
-			room.ReadyUsers = append(room.ReadyUsers, userID)
-		}
+		_ = s.repo.AddReadyUser(ctx, roomID, userID)
+		room.ReadyUsers, _ = s.repo.GetReadyUsers(ctx, roomID)
+		log.Printf("[ready] room=%s user=%s players=%d ready=%d status=%s willStart=%v",
+			roomID, userID, len(room.Players), len(room.ReadyUsers), room.Status,
+			len(room.Players) == 2 && len(room.ReadyUsers) == 2 && room.Status == StatusWaiting)
 		if !shouldAutofillWithBot(room) && len(room.Players) < 2 {
-			_ = s.repo.Save(ctx, room)
+			if err := s.repo.Save(ctx, room); err != nil {
+				return Room{}, fmt.Errorf("save room: %w", err)
+			}
 			return room, ErrNeedOpponent
 		}
+		// Bot mode or both human players ready: auto-start when second confirms
 		if len(room.Players) == 2 && len(room.ReadyUsers) == 2 && room.Status == StatusWaiting {
-			room.Status = StatusConfirmed
-			matchID := uuid.NewString()
-			if !s.disableMoney {
-				for _, playerID := range room.Players {
-					if IsBotPlayer(playerID) {
-						continue
-					}
-					if err := s.wallet.HoldBet(ctx, playerID, matchID, room.Stake); err != nil {
-						return Room{}, err
-					}
-				}
-			}
-
-			if _, err := s.games.StartMatch(ctx, matchID, room.Stake, room.Mode, room.Players); err != nil {
-				return Room{}, err
-			}
-			room.MatchID = matchID
-			room.Status = StatusInGame
+			return s.startMatchLocked(ctx, room)
 		}
-		_ = s.repo.Save(ctx, room)
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
 		return room, nil
 	})
+}
+
+// StartGame starts the match. Only the room creator can call this, and only when all players have confirmed.
+func (s *Service) StartGame(ctx context.Context, roomID string, userID string) (Room, error) {
+	return s.withRoomLock(ctx, roomID, func() (Room, error) {
+		room, ok := s.repo.Get(ctx, roomID)
+		if !ok {
+			return Room{}, ErrRoomNotFound
+		}
+		if len(room.Players) == 0 {
+			return Room{}, ErrRoomNotFound
+		}
+		if room.Players[0] != userID {
+			return Room{}, ErrNotRoomCreator
+		}
+		if len(room.Players) < 2 || len(room.ReadyUsers) < 2 || room.Status != StatusWaiting {
+			return Room{}, ErrNotAllReady
+		}
+		return s.startMatchLocked(ctx, room)
+	})
+}
+
+func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error) {
+	log.Printf("[start] entering room=%s", room.ID)
+	startKey := "room:" + room.ID + ":starting"
+	ok, err := s.repo.redis.SetNX(ctx, startKey, "1", 10*time.Second).Result()
+	if err != nil || !ok {
+		log.Printf("[start] SetNX failed room=%s err=%v ok=%v", room.ID, err, ok)
+		updated, _ := s.repo.Get(ctx, room.ID)
+		if updated.MatchID != "" {
+			return updated, nil
+		}
+		return Room{}, ErrStartInProgress
+	}
+	room.Status = StatusConfirmed
+	matchID := uuid.NewString()
+	if !s.disableMoney {
+		for _, playerID := range room.Players {
+			if IsBotPlayer(playerID) {
+				continue
+			}
+			if err := s.wallet.HoldBet(ctx, playerID, matchID, room.Stake); err != nil {
+				log.Printf("[start] HoldBet failed room=%s player=%s err=%v", room.ID, playerID, err)
+				_ = s.repo.ReleaseStartLock(ctx, room.ID)
+				_ = s.repo.ClearReadySet(ctx, room.ID)
+				return Room{}, err
+			}
+		}
+	}
+	if _, err := s.games.StartMatch(ctx, matchID, room.Stake, room.Mode, room.Players); err != nil {
+		log.Printf("[start] StartMatch failed room=%s match=%s err=%v", room.ID, matchID, err)
+		_ = s.repo.ReleaseStartLock(ctx, room.ID)
+		_ = s.repo.ClearReadySet(ctx, room.ID)
+		return Room{}, err
+	}
+	room.MatchID = matchID
+	room.Status = StatusInGame
+	if err := s.repo.Save(ctx, room); err != nil {
+		return Room{}, fmt.Errorf("save room: %w", err)
+	}
+	_ = s.repo.ClearReadySet(ctx, room.ID)
+	log.Printf("[start] match created room=%s match=%s", room.ID, matchID)
+	return room, nil
 }
 
 func (s *Service) Get(ctx context.Context, roomID string) (Room, error) {
@@ -139,7 +196,9 @@ func (s *Service) MarkRoomFinished(ctx context.Context, roomID string) (Room, er
 			return room, nil
 		}
 		room.Status = StatusFinished
-		_ = s.repo.Save(ctx, room)
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
 		return room, nil
 	})
 }
@@ -154,7 +213,8 @@ func (s *Service) LeaveOnDisconnect(ctx context.Context, roomID, userID string) 
 			return room, nil
 		}
 		room.Players = slices.DeleteFunc(room.Players, func(id string) bool { return id == userID })
-		room.ReadyUsers = slices.DeleteFunc(room.ReadyUsers, func(id string) bool { return id == userID })
+		_ = s.repo.RemoveReadyUser(ctx, roomID, userID)
+		room.ReadyUsers, _ = s.repo.GetReadyUsers(ctx, roomID)
 
 		// Lifecycle rule: if a real player leaves, room cannot continue.
 		if room.Status == StatusInGame || room.Status == StatusConfirmed || room.Status == StatusWaiting {
@@ -164,7 +224,9 @@ func (s *Service) LeaveOnDisconnect(ctx context.Context, roomID, userID string) 
 			}
 		}
 
-		_ = s.repo.Save(ctx, room)
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
 		return room, nil
 	})
 }
@@ -201,7 +263,9 @@ func (s *Service) CancelStaleRooms(ctx context.Context, maxWait time.Duration) i
 				return current, nil
 			}
 			current.Status = StatusCancelled
-			_ = s.repo.Save(ctx, current)
+			if err := s.repo.Save(ctx, current); err != nil {
+				return Room{}, fmt.Errorf("save room: %w", err)
+			}
 			cancelled++
 			metrics.IncRoomCancelled()
 			return current, nil

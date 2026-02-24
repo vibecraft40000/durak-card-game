@@ -4,6 +4,13 @@ import { getAccessToken } from "@/shared/api/auth";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "/ws";
 
+type ConnectionHandler = (event: "disconnect" | "connect") => void;
+let connectionHandler: ConnectionHandler | null = null;
+
+export function setConnectionHandler(handler: ConnectionHandler | null) {
+  connectionHandler = handler;
+}
+
 class WsClient {
   private socket: WebSocket | null = null;
   private connectedRoomId: string | null = null;
@@ -27,10 +34,14 @@ class WsClient {
     this.socket.addEventListener("open", () => {
       const isReconnect = this.reconnectAttempts > 0;
       this.reconnectAttempts = 0;
+      connectionHandler?.("connect");
       this.send({
         type: isReconnect ? "reconnect" : "join_room",
         payload: { roomId },
       });
+      if (isReconnect) {
+        setTimeout(() => this.send({ type: "sync_request", payload: { roomId } }), 100);
+      }
     });
 
     this.socket.addEventListener("message", (event) => {
@@ -43,6 +54,9 @@ class WsClient {
     this.socket.addEventListener("close", () => {
       const roomToReconnect = this.connectedRoomId;
       this.socket = null;
+      if (roomToReconnect) {
+        connectionHandler?.("disconnect");
+      }
       if (!roomToReconnect) {
         return;
       }

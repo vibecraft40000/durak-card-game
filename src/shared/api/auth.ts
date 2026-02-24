@@ -42,9 +42,6 @@ export function clearTokens() {
 }
 
 export async function bootstrapTelegramAuth(): Promise<void> {
-  if (!FORCE_DEV_AUTH && getAccessToken()) {
-    return;
-  }
   if (FORCE_DEV_AUTH) {
     const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
       method: "POST",

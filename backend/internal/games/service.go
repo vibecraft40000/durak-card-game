@@ -10,12 +10,17 @@ import (
 	"time"
 
 	"durakonline/backend/internal/games/engine"
+	"durakonline/backend/internal/gameresults"
+	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
 
-var ErrMatchNotFound = errors.New("match not found")
+var (
+	ErrMatchNotFound    = errors.New("match not found")
+	ErrVersionMismatch  = errors.New("version mismatch: state changed")
+)
 
 type HistoryRecord struct {
 	MatchID   string          `json:"match_id"`
@@ -24,21 +29,27 @@ type HistoryRecord struct {
 }
 
 type Service struct {
-	db       *pgxpool.Pool
-	redis    *redis.Client
-	history  []HistoryRecord
-	turnTTL  time.Duration
-	stateTTL time.Duration
-	locks    sync.Map
+	db              *pgxpool.Pool
+	redis           *redis.Client
+	gameResultsRepo *gameresults.Repository
+	history         []HistoryRecord
+	turnTTL         time.Duration
+	stateTTL        time.Duration
+	locks           sync.Map
 }
 
 func NewService(db *pgxpool.Pool, redisClient *redis.Client, turnTTL, stateTTL time.Duration) *Service {
+	var gameResultsRepo *gameresults.Repository
+	if db != nil {
+		gameResultsRepo = gameresults.NewRepository(db)
+	}
 	return &Service{
-		db:       db,
-		redis:    redisClient,
-		history:  make([]HistoryRecord, 0, 128),
-		turnTTL:  turnTTL,
-		stateTTL: stateTTL,
+		db:              db,
+		redis:           redisClient,
+		gameResultsRepo: gameResultsRepo,
+		history:         make([]HistoryRecord, 0, 128),
+		turnTTL:         turnTTL,
+		stateTTL:        stateTTL,
 	}
 }
 
@@ -81,27 +92,57 @@ func (s *Service) GetState(ctx context.Context, matchID string) (engine.GameStat
 	return state, nil
 }
 
-func (s *Service) Apply(ctx context.Context, matchID, playerID string, action engine.Action, cardID string) (engine.GameState, error) {
+// MutateMatch is the single mutation pipeline: lock → load → validate → apply → save → release.
+// All mutation callers (Apply, HandleTimeouts, bot) use this path.
+// If actionID is non-empty and was already processed, returns (state, false, nil) — applied=false means no broadcast.
+func (s *Service) MutateMatch(ctx context.Context, matchID string, expectedVersion *int64, actorID string, action engine.Action, cardID string, actionID string) (engine.GameState, bool, error) {
 	mu := s.matchMutex(matchID)
 	mu.Lock()
 	defer mu.Unlock()
 	release, err := s.acquireRedisLock(ctx, matchID)
 	if err != nil {
-		return engine.GameState{}, err
+		return engine.GameState{}, false, err
 	}
 	defer release()
 
 	state, err := s.GetState(ctx, matchID)
 	if err != nil {
-		return engine.GameState{}, ErrMatchNotFound
+		return engine.GameState{}, false, ErrMatchNotFound
 	}
-	if err := engine.ApplyAction(&state, playerID, action, cardID, s.turnTTL); err != nil {
-		return engine.GameState{}, err
+	if actionID != "" {
+		key := processedActionKey(matchID, actionID)
+		if _, err := s.redis.Get(ctx, key).Result(); err == nil {
+			return state, false, nil
+		}
 	}
-	if err := s.saveState(ctx, state); err != nil {
-		return engine.GameState{}, err
+	if expectedVersion != nil && state.Version != *expectedVersion {
+		return engine.GameState{}, false, ErrVersionMismatch
+	}
+	if err := s.applyCore(ctx, matchID, &state, actorID, action, cardID); err != nil {
+		return engine.GameState{}, false, err
+	}
+	if actionID != "" {
+		key := processedActionKey(matchID, actionID)
+		s.redis.Set(ctx, key, "1", processedActionTTL)
+	}
+	return state, true, nil
+}
+
+// Apply delegates to MutateMatch. Returns (state, applied, err). When applied=false (duplicate actionID), callers should not broadcast.
+func (s *Service) Apply(ctx context.Context, matchID, playerID string, action engine.Action, cardID string, expectedVersion *int64, actionID string) (engine.GameState, bool, error) {
+	return s.MutateMatch(ctx, matchID, expectedVersion, playerID, action, cardID, actionID)
+}
+
+// applyCore mutates state, saves, updates match if finished. Caller must hold lock.
+func (s *Service) applyCore(ctx context.Context, matchID string, state *engine.GameState, actorID string, action engine.Action, cardID string) error {
+	if err := engine.ApplyAction(state, actorID, action, cardID, s.turnTTL); err != nil {
+		return err
+	}
+	if err := s.saveState(ctx, *state); err != nil {
+		return err
 	}
 	if state.Status == engine.StatusFinished {
+		s.redis.ZRem(ctx, turnDeadlinesKey(), matchID)
 		dur := 0
 		if !state.StartedAt.IsZero() {
 			dur = int(time.Since(state.StartedAt).Seconds())
@@ -113,8 +154,8 @@ func (s *Service) Apply(ctx context.Context, matchID, playerID string, action en
 		metrics.ObserveRedisLatency("srem_matches_active", start)
 		s.updateActiveMatchesGauge(ctx)
 	}
-	s.snapshotLocked(matchID, state)
-	return state, nil
+	s.snapshotLocked(matchID, *state)
+	return nil
 }
 
 // updateMatchFinishedWithDetails saves match outcome: winner, reason (normal|abandon|disconnect_timeout), duration_seconds.
@@ -134,38 +175,70 @@ func (s *Service) updateMatchFinished(ctx context.Context, matchID string) {
 	s.updateMatchFinishedWithDetails(ctx, matchID, "", "normal", 0)
 }
 
-func (s *Service) HandleTimeouts(ctx context.Context) []string {
-	finished := make([]string, 0)
-	now := time.Now()
+// HandleTimeouts applies phase-aware auto-actions for expired turns.
+// Uses ZSET turn_deadlines for O(1) lookup of expired matches (scales to 10k+ concurrent games).
+// Returns TimeoutResult for each successfully applied timeout so callers can broadcast.
+func (s *Service) HandleTimeouts(ctx context.Context) []TimeoutResult {
+	var results []TimeoutResult
+	nowMs := time.Now().UnixMilli()
 	start := time.Now()
-	matchIDs, err := s.redis.SMembers(ctx, "matches:active").Result()
-	metrics.ObserveRedisLatency("smembers_matches_active", start)
+	matchIDs, err := s.redis.ZRangeByScore(ctx, turnDeadlinesKey(), &redis.ZRangeBy{
+		Min: "-inf",
+		Max: fmt.Sprintf("%d", nowMs),
+	}).Result()
+	metrics.ObserveRedisLatency("zrangebyscore_turn_deadlines", start)
 	if err != nil {
-		return finished
+		return results
 	}
 	for _, matchID := range matchIDs {
-		state, err := s.GetState(ctx, matchID)
-		if err != nil || !engine.Expired(state, now) {
-			continue
+		r := s.applyTimeoutForMatch(ctx, matchID, time.Now())
+		if r != nil {
+			results = append(results, *r)
 		}
-		_ = engine.ApplyAction(&state, state.TurnPlayerID, engine.ActionPass, "", s.turnTTL)
-		_ = s.saveState(ctx, state)
-		if state.Status == engine.StatusFinished {
-			dur := 0
-			if !state.StartedAt.IsZero() {
-				dur = int(time.Since(state.StartedAt).Seconds())
-				metrics.ObserveGameDuration(float64(dur))
-			}
-			s.updateMatchFinishedWithDetails(ctx, matchID, state.WinnerPlayer, "normal", dur)
-			finished = append(finished, matchID)
-			start := time.Now()
-			_ = s.redis.SRem(ctx, "matches:active", matchID).Err()
-			metrics.ObserveRedisLatency("srem_matches_active", start)
-		}
-		s.snapshotLocked(matchID, state)
 	}
 	s.updateActiveMatchesGauge(ctx)
-	return finished
+	return results
+}
+
+// applyTimeoutForMatch acquires lock, applies phase-aware auto-action if expired via applyCore, returns result or nil.
+func (s *Service) applyTimeoutForMatch(ctx context.Context, matchID string, now time.Time) *TimeoutResult {
+	release, err := s.acquireRedisLock(ctx, matchID)
+	if err != nil {
+		return nil
+	}
+	defer release()
+
+	state, err := s.GetState(ctx, matchID)
+	if err != nil || !engine.Expired(state, now) {
+		return nil
+	}
+
+	playerID := state.TurnPlayerID
+	action, cardID := s.timeoutActionForState(&state)
+	if err := s.applyCore(ctx, matchID, &state, playerID, action, cardID); err != nil {
+		return nil
+	}
+	return &TimeoutResult{
+		MatchID:  matchID,
+		State:    state,
+		Action:   action,
+		CardID:   cardID,
+		PlayerID: playerID,
+	}
+}
+
+func (s *Service) timeoutActionForState(state *engine.GameState) (engine.Action, string) {
+	if state.TurnState == engine.TurnDefend {
+		return engine.ActionTake, ""
+	}
+	if len(state.TableCards) > 0 && len(state.TableCards)%2 == 0 {
+		return engine.ActionPass, ""
+	}
+	hand := state.Hands[state.TurnPlayerID]
+	if len(hand) == 0 {
+		return engine.ActionPass, ""
+	}
+	return engine.ActionAttack, hand[0].ID
 }
 
 func (s *Service) snapshotLocked(matchID string, state engine.GameState) {
@@ -190,11 +263,29 @@ func (s *Service) saveState(ctx context.Context, state engine.GameState) error {
 	start := time.Now()
 	err = s.redis.Set(ctx, stateKey(state.MatchID), raw, s.stateTTL).Err()
 	metrics.ObserveRedisLatency("set_state", start)
-	return err
+	if err != nil {
+		return err
+	}
+	if state.Status == engine.StatusPlaying && !state.TurnEndsAt.IsZero() {
+		zkey := turnDeadlinesKey()
+		score := float64(state.TurnEndsAt.UnixMilli())
+		s.redis.ZAdd(ctx, zkey, redis.Z{Score: score, Member: state.MatchID})
+	}
+	return nil
 }
 
 func stateKey(matchID string) string {
 	return "match:state:" + matchID
+}
+
+func processedActionKey(matchID, actionID string) string {
+	return "processed:" + matchID + ":" + actionID
+}
+
+const processedActionTTL = 1 * time.Hour
+
+func turnDeadlinesKey() string {
+	return "turn_deadlines"
 }
 
 func disconnectedKey(matchID, playerID string) string {
@@ -227,6 +318,15 @@ func (s *Service) ClearDisconnected(ctx context.Context, matchID, playerID strin
 type AbandonResult struct {
 	MatchID string
 	State   engine.GameState
+}
+
+// TimeoutResult is returned when HandleTimeouts successfully applies an auto-action.
+type TimeoutResult struct {
+	MatchID  string
+	State    engine.GameState
+	Action   engine.Action
+	CardID   string
+	PlayerID string
 }
 
 // HandleDisconnectTimeouts finds players disconnected > 60s and force-finishes those matches.
@@ -302,6 +402,7 @@ func (s *Service) ForceAbandon(ctx context.Context, matchID, disconnectedPlayerI
 		return engine.GameState{}, errors.New("no other player to win")
 	}
 	engine.ForceFinishWithWinner(&state, winnerID)
+	s.redis.ZRem(ctx, turnDeadlinesKey(), matchID)
 	if err := s.saveState(ctx, state); err != nil {
 		return engine.GameState{}, err
 	}
@@ -330,7 +431,7 @@ func (s *Service) acquireRedisLock(ctx context.Context, matchID string) (func(),
 	key := "lock:match:" + matchID
 	token := fmt.Sprintf("%d", rand.Int63())
 	start := time.Now()
-	ok, err := s.redis.SetNX(ctx, key, token, 3*time.Second).Result()
+	ok, err := s.redis.SetNX(ctx, key, token, 10*time.Second).Result()
 	metrics.ObserveRedisLatency("setnx_match_lock", start)
 	if err != nil {
 		return nil, err
@@ -361,6 +462,35 @@ func (s *Service) ActiveMatches(ctx context.Context) int {
 
 func (s *Service) updateActiveMatchesGauge(ctx context.Context) {
 	metrics.SetActiveMatches(s.ActiveMatches(ctx))
+}
+
+// SettleMatchIfFinished runs settlement and returns PayoutInfo for match_finished broadcast.
+func (s *Service) SettleMatchIfFinished(ctx context.Context, walletService *wallet.Service, state engine.GameState, stake float64, commissionBps int) (*PayoutInfo, error) {
+	return SettleIfFinished(ctx, s.db, s.redis, walletService, s.gameResultsRepo, state, stake, commissionBps)
+}
+
+// ReconcileTurnDeadlines backfills turn_deadlines ZSET for matches in matches:active that are not yet in ZSET.
+// Handles matches created before ZSET was introduced. Runs periodically (e.g. every 5 min).
+func (s *Service) ReconcileTurnDeadlines(ctx context.Context) int {
+	start := time.Now()
+	active, err := s.redis.SMembers(ctx, "matches:active").Result()
+	metrics.ObserveRedisLatency("smembers_reconcile_deadlines", start)
+	if err != nil {
+		return 0
+	}
+	added := 0
+	zkey := turnDeadlinesKey()
+	for _, matchID := range active {
+		state, err := s.GetState(ctx, matchID)
+		if err != nil || state.Status != engine.StatusPlaying || state.TurnEndsAt.IsZero() {
+			continue
+		}
+		score := float64(state.TurnEndsAt.UnixMilli())
+		if n, _ := s.redis.ZAdd(ctx, zkey, redis.Z{Score: score, Member: matchID}).Result(); n > 0 {
+			added++
+		}
+	}
+	return added
 }
 
 // ReconcileActiveMatches removes orphaned match IDs from matches:active when match:state has expired.

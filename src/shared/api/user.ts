@@ -8,7 +8,7 @@ export type UserProfile = {
   last_name: string;
   photo_url: string;
   display_name: string;
-  currency: "USD" | "RUB" | "UAH";
+  currency: "USD";
 };
 
 type ProfileResponse = {
@@ -20,7 +20,7 @@ type SettingsResponse = {
   user: UserProfile;
   settings: {
     displayName: string;
-    currency: "USD" | "RUB" | "UAH";
+    currency: "USD";
   };
 };
 
@@ -34,7 +34,7 @@ export async function getUserSettings(): Promise<SettingsResponse> {
 
 export async function patchUserSettings(input: {
   displayName?: string;
-  currency?: "USD" | "RUB" | "UAH";
+  currency?: "USD";
 }): Promise<SettingsResponse> {
   return httpRequest<SettingsResponse>("/api/user/settings", {
     method: "PATCH",

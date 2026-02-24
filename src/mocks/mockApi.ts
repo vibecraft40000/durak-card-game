@@ -37,6 +37,9 @@ const mockRooms: Room[] = [
 const mockMatchStates = new Map<string, MatchStatePayload>();
 
 export function isMockApiEnabled() {
+  if (import.meta.env.MODE === "production") {
+    return false;
+  }
   return String(import.meta.env.VITE_USE_MOCK_API).toLowerCase() === "true";
 }
 

@@ -46,6 +46,19 @@ export async function joinRoom(roomId: string): Promise<Room> {
   const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/join`, {
     method: "POST",
   });
+  if (!response.room || typeof response.room !== "object") {
+    throw new Error("Invalid response: room is missing");
+  }
+  return normalizeRoom(response.room);
+}
+
+export async function startRoom(roomId: string): Promise<Room> {
+  const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/start`, {
+    method: "POST",
+  });
+  if (!response.room || typeof response.room !== "object") {
+    throw new Error("Invalid response: room is missing");
+  }
   return normalizeRoom(response.room);
 }
 
@@ -53,6 +66,9 @@ export async function readyRoom(roomId: string): Promise<Room> {
   const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/ready`, {
     method: "POST",
   });
+  if (!response.room || typeof response.room !== "object") {
+    throw new Error("Invalid response: room is missing");
+  }
   return normalizeRoom(response.room);
 }
 
@@ -60,6 +76,9 @@ export async function leaveRoom(roomId: string): Promise<Room> {
   const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/leave`, {
     method: "POST",
   });
+  if (!response.room || typeof response.room !== "object") {
+    throw new Error("Invalid response: room is missing");
+  }
   return normalizeRoom(response.room);
 }
 

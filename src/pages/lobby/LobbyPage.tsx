@@ -64,7 +64,7 @@ export function LobbyPage() {
             <div className="card__hint">
               {room.mode} · {room.players}/{room.maxPlayers} · колода {room.deck}
             </div>
-            <Link className="button button--primary" to={`/game/${room.id}`}>
+            <Link className="button button--primary" to={`/room/${room.id}`}>
               Играть
             </Link>
           </article>

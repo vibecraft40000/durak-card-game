@@ -59,27 +59,40 @@ func (c *Client) Close() {
 	_ = c.Conn.Close()
 }
 
+const maxConnectionsPerUser = 5
+
 type Hub struct {
-	mu      sync.Mutex
-	clients map[string]map[*Client]struct{}
-	closed  atomic.Bool
+	mu             sync.Mutex
+	clients        map[string]map[*Client]struct{}
+	connsPerUser   map[string]int // userID -> connection count
+	closed         atomic.Bool
 }
 
 func NewHub() *Hub {
-	return &Hub{clients: make(map[string]map[*Client]struct{})}
+	return &Hub{
+		clients:      make(map[string]map[*Client]struct{}),
+		connsPerUser: make(map[string]int),
+	}
 }
 
-func (h *Hub) Register(client *Client) {
+// Register adds a client. Returns false if user already has maxConnectionsPerUser connections.
+func (h *Hub) Register(client *Client) bool {
 	if h.closed.Load() {
-		return
+		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	n := h.connsPerUser[client.UserID]
+	if n >= maxConnectionsPerUser {
+		return false
+	}
 	if _, ok := h.clients[client.RoomID]; !ok {
 		h.clients[client.RoomID] = make(map[*Client]struct{})
 	}
 	h.clients[client.RoomID][client] = struct{}{}
+	h.connsPerUser[client.UserID]++
 	metrics.SetWSActiveConnections(h.countClientsLocked())
+	return true
 }
 
 func (h *Hub) Unregister(client *Client) {
@@ -89,6 +102,12 @@ func (h *Hub) Unregister(client *Client) {
 		delete(roomClients, client)
 		if len(roomClients) == 0 {
 			delete(h.clients, client.RoomID)
+		}
+	}
+	if h.connsPerUser[client.UserID] > 0 {
+		h.connsPerUser[client.UserID]--
+		if h.connsPerUser[client.UserID] == 0 {
+			delete(h.connsPerUser, client.UserID)
 		}
 	}
 	metrics.SetWSActiveConnections(h.countClientsLocked())

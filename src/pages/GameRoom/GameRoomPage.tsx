@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Room } from "@/entities/match/types";
-import { getRoom, joinRoom, leaveRoom, normalizeRoom } from "@/shared/api/rooms";
+import { HttpError } from "@/shared/api/http";
+import { getRoom, joinRoom, leaveRoom, normalizeRoom, readyRoom, startRoom } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { wsClient } from "@/shared/api/ws/socket";
@@ -11,6 +12,20 @@ import { CardSkeleton, ConfirmModal, EmptyStateBlock, ErrorStateBlock } from "@/
 import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
 
+function formatApiError(e: unknown, fallback = "Попробуйте снова."): string {
+  if (e instanceof HttpError) {
+    if (e.status === 401)
+      return "Ошибка авторизации. Откройте приложение заново из Telegram.";
+    const body = String(e.responseBody ?? e.message ?? "").toLowerCase();
+    if (body.includes("insufficient balance"))
+      return "Недостаточно средств у одного из игроков. Пополните баланс.";
+    if (body.includes("match start already in progress"))
+      return "Старт уже выполняется. Подождите несколько секунд и попробуйте снова.";
+    return body ? String(e.responseBody ?? e.message) : fallback;
+  }
+  return fallback;
+}
+
 export function GameRoomPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -19,6 +34,7 @@ export function GameRoomPage() {
   const [error, setError] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [isReadyLoading, setIsReadyLoading] = useState(false);
+  const [isStartLoading, setIsStartLoading] = useState(false);
   const [isWaitingStart, setIsWaitingStart] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
@@ -44,17 +60,21 @@ export function GameRoomPage() {
   const room = useMemo(() => rooms.find((item) => item.id === id), [id, rooms]);
   const isCurrentUserConfirmed = room && currentUserId ? room.readyUserIds.includes(currentUserId) : false;
   const playersCount = room ? (room.playerIds?.length ?? room.players ?? 0) : 0;
+  const isCreator = room && currentUserId && room.playerIds?.[0] === currentUserId;
+  const allReady = room && (room.readyPlayers ?? 0) >= (room.players ?? room.maxPlayers ?? 2);
   const canConfirm = Boolean(
     room &&
       room.status === "waiting" &&
       playersCount >= 2 &&
       !isCurrentUserConfirmed,
   );
+  const canStart = Boolean(
+    room && room.status === "waiting" && isCreator && allReady && playersCount >= 2,
+  );
 
-  async function confirmAndStart() {
-    if (!id) {
-      return;
-    }
+  async function confirmReady() {
+    if (!id) return;
+    if (isReadyLoading) return;
     if (!room || room.players < 2) {
       setInfoMessage("Нельзя начать: в комнате пока нет соперника.");
       return;
@@ -64,19 +84,45 @@ export function GameRoomPage() {
     setInfoMessage(null);
 
     try {
-      console.log("[confirm_flow] send confirm_join", {
-        roomId: id,
-        currentUserId,
-        readyUserIds: room.readyUserIds,
-        playersCount,
-      });
       wsClient.send({ type: "confirm_join", payload: { roomId: id } });
+      const updatedRoom = await readyRoom(id);
+      setRooms([updatedRoom]);
       setInfoMessage("Подтверждение отправлено...");
       setIsWaitingStart(true);
-    } catch {
-      setError("Не удалось подтвердить готовность. Попробуйте снова.");
+      if (updatedRoom.matchId) {
+        navigate(`/game/${id}`);
+      }
+    } catch (e) {
+      const msg = formatApiError(e, "Не удалось подтвердить готовность. Проверьте подключение и попробуйте снова.");
+      setError(msg);
     } finally {
       setIsReadyLoading(false);
+    }
+  }
+
+  async function handleStart() {
+    if (!id) return;
+    if (isStartLoading) return;
+    if (!room || room.players < 2 || !allReady) {
+      setInfoMessage("Сначала все должны подтвердить участие.");
+      return;
+    }
+    setIsStartLoading(true);
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      wsClient.send({ type: "start_game", payload: { roomId: id } });
+      const updatedRoom = await startRoom(id);
+      setRooms([updatedRoom]);
+      if (updatedRoom.matchId) {
+        navigate(`/game/${id}`);
+      }
+    } catch (e) {
+      const msg = formatApiError(e, "Не удалось начать игру. Попробуйте снова.");
+      setError(msg);
+    } finally {
+      setIsStartLoading(false);
     }
   }
 
@@ -97,23 +143,15 @@ export function GameRoomPage() {
       if (normalized.id !== id) {
         return;
       }
-      console.log("[confirm_flow] room_update", {
-        roomId: normalized.id,
-        readyPlayers: normalized.readyPlayers,
-        readyUserIds: normalized.readyUserIds,
-        players: normalized.players,
-        playerIds: normalized.playerIds,
-        matchId: normalized.matchId,
-        status: normalized.status,
-        canConfirm: normalized.status === "waiting" && (normalized.playerIds?.length ?? normalized.players) >= 2,
-      });
       setRooms([normalized]);
       if (normalized.matchId) {
         navigate(`/game/${id}`);
         return;
       }
-      if (normalized.readyPlayers && normalized.readyPlayers >= normalized.maxPlayers) {
-        setInfoMessage("Все подтвердили вход. Запускаем игру...");
+      if (normalized.readyPlayers && normalized.readyPlayers >= normalized.maxPlayers && !normalized.matchId) {
+        const creatorId = normalized.playerIds?.[0];
+        const amCreator = creatorId === currentUserId;
+        setInfoMessage(amCreator ? "Все подтвердили. Нажмите «Начать»." : "Все подтвердили. Ждём запуска от создателя стола.");
       }
     });
 
@@ -121,7 +159,7 @@ export function GameRoomPage() {
       offRoomUpdate();
       wsClient.disconnect();
     };
-  }, [id, navigate]);
+  }, [id, navigate, currentUserId]);
 
   useEffect(() => {
     if (!id || !isWaitingStart) {
@@ -200,7 +238,7 @@ export function GameRoomPage() {
           <AppCard>
             <div className="card__label">Условия</div>
             <div className="card__hint">Тестовый режим: игра без списаний и выплат.</div>
-            <div className="card__hint">Если не подтвердить вход — игра не стартует.</div>
+            <div className="card__hint">Сначала оба подтверждают, затем создатель стола нажимает «Начать».</div>
             <div className="card__hint">
               Готовы: {room.readyPlayers ?? 0}/{room.players}
             </div>
@@ -212,7 +250,8 @@ export function GameRoomPage() {
               type="button"
               variant="ghost"
               onClick={async () => {
-                const url = new URL(`/room/${id}`, window.location.origin).href;
+                const botUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot";
+                const url = `https://t.me/${botUsername}/app?startapp=room_${id ?? ""}`;
                 const text = `Присоединяйся к игре в дурака: ${room.title}`;
                 try {
                   await navigator.share({ title: "Дурак Онлайн", text, url });
@@ -220,6 +259,7 @@ export function GameRoomPage() {
                   setInfoMessage("Приглашение отправлено");
                 } catch {
                   await navigator.clipboard.writeText(url);
+                  setInfoMessage("Ссылка скопирована");
                   hapticNotification("success");
                   setInfoMessage("Ссылка скопирована");
                 }
@@ -235,12 +275,25 @@ export function GameRoomPage() {
               type="button"
               onClick={() => {
                 hapticImpact("medium");
-                void confirmAndStart();
+                void confirmReady();
               }}
               disabled={isReadyLoading || !canConfirm}
             >
-              {isReadyLoading ? "Подключаем..." : "Подтвердить и начать"}
+              {isReadyLoading ? "Подключаем..." : "Подтвердить"}
             </AppButton>
+            {canStart && (
+              <AppButton
+                variant="primary"
+                type="button"
+                onClick={() => {
+                  hapticImpact("medium");
+                  void handleStart();
+                }}
+                disabled={isStartLoading}
+              >
+                {isStartLoading ? "Запускаем..." : "Начать"}
+              </AppButton>
+            )}
             <AppButton type="button" onClick={() => setIsLeaveModalOpen(true)}>
               Покинуть комнату
             </AppButton>
