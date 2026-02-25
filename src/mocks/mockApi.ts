@@ -138,7 +138,7 @@ export function initializeMockMatch(roomId: string): MatchStatePayload {
     return existing;
   }
 
-  const initial: MatchStatePayload = {
+  const initial = {
     roomId,
     status: "playing",
     trumpSuit: "hearts",
@@ -149,7 +149,7 @@ export function initializeMockMatch(roomId: string): MatchStatePayload {
       createPlayer(MOCK_USER_ID, "Вы", createInitialHand()),
       createPlayer(MOCK_OPPONENT_ID, "Bot", []),
     ],
-  };
+  } as unknown as MatchStatePayload;
 
   mockMatchStates.set(roomId, initial);
   return initial;
@@ -164,7 +164,7 @@ export function applyMockMatchAction(params: {
   const players = [...(state.players ?? [])];
   const me = players.find((player) => player.id === MOCK_USER_ID);
   const opponent = players.find((player) => player.id === MOCK_OPPONENT_ID);
-  const tableCards = [...state.tableCards];
+  const tableCards = [...(state.tableCards ?? [])];
 
   if (!me || !opponent) {
     return state;

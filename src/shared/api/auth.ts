@@ -21,7 +21,12 @@ type RefreshResponse = {
 const ACCESS_TOKEN_KEY = "durak_access_token";
 const REFRESH_TOKEN_KEY = "durak_refresh_token";
 const DEV_IDENTITY_KEY = "durak_dev_identity";
+const DEV_AUTH_FLAG_KEY = "durak_dev_auth";
 const FORCE_DEV_AUTH = String(import.meta.env.VITE_FORCE_DEV_AUTH).toLowerCase() === "true";
+const IS_PROD_DOMAIN =
+  typeof window !== "undefined" &&
+  (window.location.origin === "https://durakonline.duckdns.org" ||
+    window.location.origin === "https://www.durakonline.duckdns.org");
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -41,34 +46,43 @@ export function clearTokens() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
-export async function bootstrapTelegramAuth(): Promise<void> {
+export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void> {
+  const opts = { method: "POST" as const, skipAuth: true as const, signal };
   if (FORCE_DEV_AUTH) {
     const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
-      method: "POST",
+      ...opts,
       body: { initData: buildDevInitData() },
-      skipAuth: true,
     });
     setTokens(response.accessToken, response.refreshToken);
+    localStorage.setItem(DEV_AUTH_FLAG_KEY, "true");
     return;
   }
   const initData = getTelegramInitData();
   if (!initData) {
-    // Dev fallback for browser-only run.
+    // In production on the real domain we must NOT fall back to dev auth.
+    // This effectively blocks direct access without Telegram WebApp context.
+    if (IS_PROD_DOMAIN) {
+      // Mark that dev auth was not used and clear any stale tokens.
+      clearTokens();
+      localStorage.removeItem(DEV_AUTH_FLAG_KEY);
+      throw new Error("Telegram initData is missing in production environment");
+    }
+    // In local/dev environments we keep the convenient dev auth fallback.
     const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
-      method: "POST",
+      ...opts,
       body: { initData: buildDevInitData() },
-      skipAuth: true,
     });
     setTokens(response.accessToken, response.refreshToken);
+    localStorage.setItem(DEV_AUTH_FLAG_KEY, "true");
     return;
   }
 
   const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
-    method: "POST",
+    ...opts,
     body: { initData },
-    skipAuth: true,
   });
   setTokens(response.accessToken, response.refreshToken);
+  localStorage.removeItem(DEV_AUTH_FLAG_KEY);
 }
 
 export async function refreshAccessToken(): Promise<string | null> {

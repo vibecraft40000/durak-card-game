@@ -3,8 +3,18 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CreateRoomInput, DeckSize, GameMode } from "@/entities/match/types";
 import { createRoom } from "@/shared/api/rooms";
-import { BackIcon } from "@/shared/ui/Icons";
+import {
+  BackIcon,
+  CheckCircleIcon,
+  ClassicIcon,
+  CheaterIcon,
+  DrawIcon,
+  FairPlayIcon,
+  PodkidnoyIcon,
+  TransferIcon,
+} from "@/shared/ui/Icons";
 import { ErrorStateBlock } from "@/shared/ui/StateBlocks";
+import { AppCard } from "@/shared/ui/Card";
 
 export function CreateGamePage() {
   const navigate = useNavigate();
@@ -18,9 +28,10 @@ export function CreateGamePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [fairness, setFairness] = useState<"Честная игра" | "Шулер" | "all">("all");
+  const [style, setStyle] = useState<"Классика" | "Ничья" | "all">("all");
+
   const validationError =
-    !form.title?.trim() ? "Введите название стола" :
-    (form.title?.length ?? 0) > 50 ? "Название не более 50 символов" :
     form.stakeUsd < 1 || form.stakeUsd > 500 ? "Ставка от 1 до 500" : null;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -51,74 +62,140 @@ export function CreateGamePage() {
         <h1 className="page-header__title">Создать игру</h1>
         <div className="page-header__spacer" />
       </div>
-      <p className="screen__subtitle">Задайте ставку, режим и параметры комнаты.</p>
+      <p className="screen__subtitle">Выберите ставку, колоду, игроков и тип игры.</p>
 
-      <form className="card" onSubmit={handleSubmit}>
-        <div className="form-grid">
-          <label className="field">
-            <span>Название стола</span>
-            <input
-              type="text"
-              value={form.title}
-              maxLength={50}
-              placeholder="Новый стол"
-              onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-            />
-          </label>
+      <form className="create-form" onSubmit={handleSubmit}>
+        <AppCard className="card--compact">
+          <div className="card__row">
+            <span>Ваша ставка</span>
+            <strong>${form.stakeUsd}</strong>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={500}
+            value={form.stakeUsd}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, stakeUsd: Number(event.target.value) || 1 }))
+            }
+          />
+        </AppCard>
 
-          <label className="field">
-            <span>Ставка (USD)</span>
-            <input
-              type="number"
-              value={form.stakeUsd}
-              min={1}
-              max={500}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, stakeUsd: Number(event.target.value) || 1 }))
-              }
-            />
-          </label>
+        <div className="filter-group">
+          <span className="filter-group__label">Колода</span>
+          <div className="pill-group">
+            {[24, 36, 52].map((deck) => (
+              <button
+                key={deck}
+                type="button"
+                className={`pill ${form.deck === deck ? "pill--active" : ""}`}
+                onClick={() => setForm((prev) => ({ ...prev, deck: deck as DeckSize }))}
+              >
+                {deck}
+              </button>
+            ))}
+          </div>
+        </div>
 
-          <label className="field">
-            <span>Режим</span>
-            <select
-              value={form.mode}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, mode: event.target.value as GameMode }))
-              }
-            >
-              <option>Подкидной</option>
-              <option>Переводной</option>
-            </select>
-          </label>
+        <div className="filter-group">
+          <span className="filter-group__label">Игроки</span>
+          <div className="pill-group">
+            {[2, 3, 4].map((players) => (
+              <button
+                key={players}
+                type="button"
+                className={`pill ${form.maxPlayers === players ? "pill--active" : ""}`}
+                onClick={() => setForm((prev) => ({ ...prev, maxPlayers: players }))}
+              >
+                {players}
+              </button>
+            ))}
+          </div>
+        </div>
 
-          <label className="field">
-            <span>Колода</span>
-            <select
-              value={form.deck}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, deck: Number(event.target.value) as DeckSize }))
-              }
-            >
-              <option value={24}>24</option>
-              <option value={36}>36</option>
-              <option value={52}>52</option>
-            </select>
-          </label>
+        <div className="filter-group">
+          <span className="filter-group__label">Тип игры</span>
+          <div className="filter-grid">
+            {[
+              {
+                title: "Подкидной",
+                group: "mode" as const,
+                modeValue: "Подкидной" as const,
+                icon: PodkidnoyIcon,
+              },
+              {
+                title: "Честная игра",
+                group: "fairness" as const,
+                fairnessValue: "Честная игра" as const,
+                icon: FairPlayIcon,
+              },
+              {
+                title: "Классика",
+                group: "style" as const,
+                styleValue: "Классика" as const,
+                icon: ClassicIcon,
+              },
+              {
+                title: "Переводной",
+                group: "mode" as const,
+                modeValue: "Переводной" as const,
+                icon: TransferIcon,
+              },
+              {
+                title: "Шулер",
+                group: "fairness" as const,
+                fairnessValue: "Шулер" as const,
+                icon: CheaterIcon,
+              },
+              {
+                title: "Ничья",
+                group: "style" as const,
+                styleValue: "Ничья" as const,
+                icon: DrawIcon,
+              },
+            ].map((item, index) => {
+              const isActive =
+                item.group === "mode"
+                  ? form.mode === item.modeValue
+                  : item.group === "fairness"
+                    ? fairness === item.fairnessValue
+                    : style === item.styleValue;
 
-          <label className="field">
-            <span>Игроков максимум</span>
-            <select
-              value={form.maxPlayers}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, maxPlayers: Number(event.target.value) }))
-              }
-            >
-              <option value={2}>2</option>
-              <option value={3}>3</option>
-              <option value={4}>4</option>
-            </select>
-          </label>
+              return (
+                <button
+                  key={`${item.title}-${index}`}
+                  type="button"
+                  className={`filter-card ${isActive ? "filter-card--active" : ""}`}
+                  onClick={() => {
+                    if (item.group === "mode") {
+                      const nextMode =
+                        form.mode === item.modeValue ? (form.mode as GameMode) : item.modeValue;
+                      setForm((prev) => ({ ...prev, mode: nextMode }));
+                      return;
+                    }
+
+                    if (item.group === "fairness") {
+                      const nextFairness =
+                        fairness === item.fairnessValue ? "all" : item.fairnessValue;
+                      setFairness(nextFairness);
+                      return;
+                    }
+
+                    const nextStyle = style === item.styleValue ? "all" : item.styleValue;
+                    setStyle(nextStyle);
+                  }}
+                >
+                  <item.icon size={20} />
+                  <span>{item.title}</span>
+                  {isActive && (
+                    <span className="filter-card__check">
+                      <CheckCircleIcon size={20} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {(error || validationError) && (
@@ -128,8 +205,12 @@ export function CreateGamePage() {
           />
         )}
 
-        <button type="submit" className="button button--primary" disabled={isSubmitting || !!validationError}>
-          {isSubmitting ? "Создаем..." : "Создать стол"}
+        <button
+          type="submit"
+          className="button button--primary create-game__submit"
+          disabled={isSubmitting || !!validationError}
+        >
+          {isSubmitting ? "Создаем..." : "Создать игру"}
         </button>
       </form>
     </section>

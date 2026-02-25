@@ -3,6 +3,9 @@
 .env.local
 .deploy-pw
 
+# Debug / IDE
+.cursor/
+
 # Node
 node_modules/
 dist/
@@ -10,3 +13,13 @@ dist/
 # Backend
 backend/.gopath/
 backend/.gocache/
+
+# Bot
+bot/data/
+bot/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Admin panel
+admin_panel/admin_data.db
+admin_panel/instance/

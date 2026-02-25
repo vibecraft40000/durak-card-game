@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Пользователи — Админка{% endblock %}
+{% block content %}
+<h1>Пользователи</h1>
+{% if error %}
+<p class="error">{{ error }}</p>
+{% else %}
+<div class="card">
+  <p>Всего: <strong>{{ total }}</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Telegram ID</th>
+        <th>Username</th>
+        <th>Имя</th>
+        <th>Язык</th>
+        <th>Регистрация</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.id[:8] }}…</td>
+        <td>{{ u.telegram_id }}</td>
+        <td>@{{ u.username or '—' }}</td>
+        <td>{{ u.display_name or u.first_name or (u.username or '—') }}</td>
+        <td>{{ u.language or 'ru' }}</td>
+        <td>{{ (u.created_at or '')[:10] or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pages > 1 %}
+  <div class="pagination">
+    {% if page > 1 %}
+    <a href="{{ url_for('users.index', page=page - 1) }}">← Назад</a>
+    {% endif %}
+    <span class="current">Стр. {{ page }} из {{ pages }}</span>
+    {% if page < pages %}
+    <a href="{{ url_for('users.index', page=page + 1) }}">Вперёд →</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

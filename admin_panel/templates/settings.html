@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Настройки — Админка{% endblock %}
+{% block content %}
+<h1>Настройки</h1>
+<div class="card">
+  <p><strong>API бэкенда (Go)</strong></p>
+  <p>API_BASE_URL: <code>{{ api_base_url }}</code></p>
+  <p>ADMIN_SECRET: {{ 'задан' if admin_secret_set else 'не задан' }}</p>
+  <p style="color: #565f89;">Настройте переменные в <code>admin_panel/.env</code> или в окружении сервера.</p>
+</div>
+{% endblock %}

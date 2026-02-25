@@ -217,3 +217,49 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 	}
 	return user, nil
 }
+
+// Count returns total number of users (for admin stats).
+func (r *Repository) Count(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var n int
+	start := time.Now()
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	metrics.ObserveDBQuery("users_count", start)
+	return n, err
+}
+
+// ListPaginated returns users for admin panel (offset, limit) and total count.
+func (r *Repository) ListPaginated(ctx context.Context, offset, limit int) ([]User, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	start := time.Now()
+	err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&total)
+	metrics.ObserveDBQuery("users_count", start)
+	if err != nil {
+		return nil, 0, err
+	}
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	rows, err := r.db.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []User
+	for rows.Next() {
+		var u User
+		err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.PhotoURL, &u.DisplayName, &u.Currency, &u.Language, &u.ReferralCode, &u.InvitedBy, &u.CreatedAt, &u.UpdatedAt)
+		if err != nil {
+			return nil, 0, err
+		}
+		list = append(list, u)
+	}
+	return list, total, rows.Err()
+}

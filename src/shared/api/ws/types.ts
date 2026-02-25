@@ -2,6 +2,101 @@ import type { Card } from "@/entities/card/types";
 import type { MatchActionType } from "@/entities/match/types";
 import type { Player } from "@/entities/player/types";
 
+// All possible player intents sent from client to server
+export type IntentType =
+  | "playAttack"
+  | "playDefend"
+  | "throwIn"
+  | "translate"
+  | "take"
+  | "pass"
+  | "endTurn"
+  | "confirmStake"
+  | "shulerReport";
+
+// Envelope for client intents
+export interface ClientIntent {
+  type: IntentType;
+  actionId: string;
+  expectedVersion: number;
+  payload?: unknown;
+}
+
+// Seat (player position) at the table
+export interface Seat {
+  id: string;
+  name: string;
+  cardCount: number;
+  isReady: boolean;
+  isConfirmed: boolean;
+  avatarUrl?: string;
+}
+
+// Extended match state payload from backend
+export interface MatchStatePayload {
+  // Versioning / last action
+  version: number;
+  lastActionId?: string;
+
+  // High-level phase of the match
+  phase: "betting" | "playing" | "result";
+
+  // Table configuration
+  deckType: 24 | 36 | 52;
+  mode: "podkidnoy" | "perevodnoy";
+  stakeUsd: number;
+  trumpSuit: string;
+
+  // Deck / table state
+  stockCount: number;
+  discardCount: number;
+  capacityOnTable: number;
+  allowedRanks: string[];
+  /** Absolute timestamp (ms since epoch) when current turn ends */
+  turnEndsAt?: number;
+  /** Seat index of player whose turn it is (attacker/defender/thrower depending on phase) */
+  turnSeatIndex?: number;
+
+  // Cards on the table (attack/defense pairs)
+  tablePiles?: {
+    attack: Card;
+    defend?: Card;
+    /** Legacy/client-friendly alias for defend */
+    defense?: Card;
+  }[];
+
+  // Players and roles
+  seats: Seat[];
+  attackerSeat: number;
+  defenderSeat: number;
+
+  // Current viewer data
+  myHand: string[];
+  mySeatIndex: number;
+
+  // Shuler ability / report window
+  shuler?: {
+    isWindowOpen: boolean;
+    activePlayers: string[];
+  };
+
+  // Finish / payouts
+  finish?: {
+    bank: number;
+    commission: number;
+    payouts: Record<string, number>;
+    places: string[];
+  };
+
+  // Legacy / transitional fields kept for backward compatibility with older client code
+  roomId?: string;
+  status?: string;
+  turnPlayerId?: string;
+  tableCards?: Card[];
+  players?: Player[];
+  winnerPlayerId?: string;
+}
+
 export type ClientWsEvent =
   | {
       type: "join_room";
@@ -44,22 +139,11 @@ export type ClientWsEvent =
   | {
       type: "sync_request";
       payload: { roomId: string };
+    }
+  | {
+      type: "intent";
+      payload: ClientIntent;
     };
-
-export type MatchStatePayload = {
-  roomId: string;
-  matchId?: string;
-  version?: number;
-  phase?: "attack" | "defend";
-  players?: Player[];
-  tableCards: Card[];
-  trumpSuit: string;
-  trumpCard?: { id: string; suit: string; rank: string };
-  turnPlayerId?: string;
-  turnEndsAt?: number;
-  winnerPlayerId?: string;
-  status: "waiting" | "playing" | "finished";
-};
 
 export type ServerWsEvent =
   | { type: "room_update"; payload: Record<string, unknown> }

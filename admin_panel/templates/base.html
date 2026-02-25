@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Админка — Дурак Онлайн{% endblock %}</title>
+  <style>
+    :root { --bg: #1a1b26; --card: #24283b; --text: #c0caf5; --accent: #7aa2f7; --danger: #f7768e; --success: #9ece6a; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; min-height: 100vh; }
+    .container { max-width: 960px; margin: 0 auto; padding: 1rem; }
+    nav { background: var(--card); padding: 0.75rem 1rem; margin-bottom: 1.5rem; }
+    nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; }
+    nav a:hover { text-decoration: underline; }
+    .flash { padding: 0.5rem 1rem; margin-bottom: 1rem; border-radius: 6px; }
+    .flash.danger { background: rgba(247,118,142,0.2); color: var(--danger); }
+    .flash.success { background: rgba(158,206,106,0.2); color: var(--success); }
+    .flash.info { background: rgba(122,162,247,0.2); color: var(--accent); }
+    .flash.warning { background: rgba(224,175,50,0.2); }
+    .card { background: var(--card); border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+    h1 { margin-top: 0; font-size: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    th { color: var(--accent); font-weight: 600; }
+    .pagination { margin-top: 1rem; }
+    .pagination a, .pagination span { margin-right: 0.5rem; color: var(--accent); }
+    .pagination .current { color: var(--text); }
+    .stat { font-size: 2rem; font-weight: 700; color: var(--accent); }
+    .error { color: var(--danger); }
+    .btn { display: inline-block; padding: 0.5rem 1rem; background: var(--accent); color: var(--bg); border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 1rem; }
+    .btn:hover { opacity: 0.9; }
+    input[type=text], input[type=password] { padding: 0.5rem; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; background: var(--bg); color: var(--text); width: 100%; max-width: 280px; }
+    label { display: block; margin-bottom: 0.25rem; }
+    .form-group { margin-bottom: 1rem; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% if current_user.is_authenticated %}
+  <nav>
+    <a href="{{ url_for('dashboard.index') }}">Дашборд</a>
+    <a href="{{ url_for('users.index') }}">Пользователи</a>
+    <a href="{{ url_for('settings.index') }}">Настройки</a>
+    <a href="{{ url_for('auth.logout') }}">Выход</a>
+  </nav>
+  {% endif %}
+  <div class="container">
+    {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

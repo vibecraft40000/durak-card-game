@@ -30,8 +30,17 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) {
         return this.props.fallback;
       }
-      return (
-        <div className="screen" style={{ padding: 20, textAlign: "center" }}>
+        return (
+        <div
+          className="screen"
+          style={{
+            padding: 20,
+            textAlign: "center",
+            minHeight: "100vh",
+            background: "var(--color-bg-primary, #010a1b)",
+            color: "var(--color-text-primary, #ffffff)",
+          }}
+        >
           <h2 className="screen__title">Что-то пошло не так</h2>
           <p className="card__hint" style={{ marginBottom: 16 }}>
             {this.state.error.message}

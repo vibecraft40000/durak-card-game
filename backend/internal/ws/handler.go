@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +38,22 @@ type Handler struct {
 	upgrader      websocket.Upgrader
 }
 
-func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, usersRepo *users.Repository, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service) *Handler {
+func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, usersRepo *users.Repository, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service, allowedOrigin string) *Handler {
+	allowed := make(map[string]bool)
+	for _, o := range strings.Split(allowedOrigin, ",") {
+		o = strings.TrimSpace(strings.TrimRight(o, "/"))
+		if o != "" {
+			allowed[o] = true
+		}
+	}
+	checkOrigin := func(r *http.Request) bool {
+		if allowedOrigin == "" || allowedOrigin == "*" || allowed["*"] {
+			return true
+		}
+		origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+		return origin != "" && allowed[origin]
+	}
+
 	return &Handler{
 		authService:   authService,
 		rooms:         roomsService,
@@ -50,7 +66,7 @@ func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesSer
 		bus:           bus,
 		limiter:       limiter,
 		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin: checkOrigin,
 		},
 	}
 }
@@ -315,10 +331,22 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 		if !h.allowWSRateLimit(ctx, client, "send_message") {
 			return
 		}
-		message, _ := event.Payload["message"].(string)
+		raw, _ := event.Payload["message"].(string)
+		msg := strings.TrimSpace(raw)
+		if msg == "" {
+			return
+		}
+		const maxChatLen = 512
+		runes := []rune(msg)
+		if len(runes) > maxChatLen {
+			msg = string(runes[:maxChatLen])
+		}
 		h.broadcast(ctx, client.RoomID, ServerEvent{
-			Type:    "chat_message",
-			Payload: map[string]string{"userId": client.UserID, "message": message},
+			Type: "chat_message",
+			Payload: map[string]string{
+				"userId":  client.UserID,
+				"message": msg,
+			},
 		})
 	case "sync_request":
 		if !h.allowWSRateLimit(ctx, client, "sync_request") {
@@ -505,11 +533,30 @@ func (h *Handler) Drain(timeout time.Duration) {
 	h.hub.Drain(timeout)
 }
 
-const wsRateLimitPer10s = 20
+const (
+	wsRateLimitChatPer10s  = 15
+	wsRateLimitSyncPer10s  = 5
+	wsRateLimitJoinPer10s  = 3
+	wsRateLimitOtherPer10s = 20
+)
+
+func wsLimitForEvent(eventType string) int {
+	switch eventType {
+	case "send_message":
+		return wsRateLimitChatPer10s
+	case "sync_request":
+		return wsRateLimitSyncPer10s
+	case "join_room", "reconnect":
+		return wsRateLimitJoinPer10s
+	default:
+		return wsRateLimitOtherPer10s
+	}
+}
 
 func (h *Handler) allowWSRateLimit(ctx context.Context, client *Client, eventType string) bool {
 	key := fmt.Sprintf("ws:%s:%s", client.UserID, eventType)
-	allowed, err := h.limiter.Allow(ctx, key, wsRateLimitPer10s, 10*time.Second)
+	limit := wsLimitForEvent(eventType)
+	allowed, err := h.limiter.Allow(ctx, key, limit, 10*time.Second)
 	if err != nil {
 		h.sendRoomError(client, "rate limiter unavailable")
 		return false

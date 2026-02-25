@@ -1,8 +1,18 @@
 import { emitWsEvent } from "@/shared/api/ws/events";
-import type { ClientWsEvent, ServerWsEvent } from "@/shared/api/ws/types";
+import type { ClientIntent, ClientWsEvent, IntentType, ServerWsEvent } from "@/shared/api/ws/types";
 import { getAccessToken } from "@/shared/api/auth";
+import { getGameState, setInteractionLocked } from "@/store/game.store";
+import { mapServerErrorToMessage } from "@/shared/utils/mapServerErrorToMessage";
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? "/ws";
+const RAW_WS_URL = import.meta.env.VITE_WS_URL ?? "/ws";
+
+// Prefer same-origin WS on production domain to avoid localhost leaks in builds.
+const WS_URL =
+  typeof window !== "undefined" &&
+  (window.location.origin === "https://durakonline.duckdns.org" ||
+    window.location.origin === "https://www.durakonline.duckdns.org")
+    ? "/ws"
+    : RAW_WS_URL;
 
 type ConnectionHandler = (event: "disconnect" | "connect") => void;
 let connectionHandler: ConnectionHandler | null = null;
@@ -48,6 +58,36 @@ class WsClient {
       const parsed = tryParse(event.data);
       if (parsed) {
         emitWsEvent(parsed);
+
+        // Попытка вытащить ошибку интента из серверного события и ретранслировать в UI
+        try {
+          const anyParsed = parsed as any;
+          const errPayload =
+            anyParsed?.error ||
+            anyParsed?.intentError ||
+            (anyParsed?.type === "intent_response" && anyParsed?.error) ||
+            anyParsed?.intentResponse?.error;
+
+          if (errPayload) {
+            const mapped = mapServerErrorToMessage(errPayload);
+            // eslint-disable-next-line no-console
+            console.warn("[ws] intent error:", { raw: errPayload, mapped });
+
+            window.dispatchEvent(
+              new CustomEvent("tma:intentError", {
+                detail: {
+                  raw: errPayload,
+                  text: mapped.text,
+                  code: mapped.code,
+                  original: anyParsed,
+                },
+              }),
+            );
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("[ws] error while handling intent error payload", err);
+        }
       }
     });
 
@@ -76,6 +116,20 @@ class WsClient {
       return;
     }
     this.socket.send(JSON.stringify(event));
+  }
+
+  sendIntent(type: IntentType, payload?: ClientIntent["payload"]) {
+    const gameState = getGameState();
+    const version = gameState.matchState?.version ?? 0;
+    const intent: ClientIntent = {
+      type,
+      actionId: crypto.randomUUID(),
+      expectedVersion: version,
+      payload,
+    };
+
+    setInteractionLocked(true);
+    this.send({ type: "intent", payload: intent });
   }
 
   disconnect() {

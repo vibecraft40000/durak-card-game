@@ -1,6 +1,14 @@
 import { isMockApiEnabled, mockHttpRequest } from "@/mocks/mockApi";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const RAW_API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+
+// Prefer same-origin calls on production domain to avoid CORS issues.
+const API_BASE_URL =
+  typeof window !== "undefined" &&
+  (window.location.origin === "https://durakonline.duckdns.org" ||
+    window.location.origin === "https://www.durakonline.duckdns.org")
+    ? ""
+    : RAW_API_BASE_URL;
 const ACCESS_TOKEN_KEY = "durak_access_token";
 const REFRESH_TOKEN_KEY = "durak_refresh_token";
 
@@ -34,16 +42,44 @@ export async function httpRequest<T>(path: string, options: RequestOptions = {})
     return result as T;
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method,
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeader(skipAuth),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method,
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...getAuthHeader(skipAuth),
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // #region agent log
+    fetch("http://127.0.0.1:7658/ingest/8c12422b-b1ba-4515-b1f8-f29b4e599d6e", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "42d28e",
+      },
+      body: JSON.stringify({
+        sessionId: "42d28e",
+        runId: "pre-fix",
+        hypothesisId: "H2",
+        location: "src/shared/api/http.ts:httpRequest",
+        message: "Network error in httpRequest",
+        data: {
+          path,
+          method,
+          baseUrl: API_BASE_URL,
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    throw err;
+  }
 
   const raw = await response.text();
   const parsed = raw ? tryParseJson(raw) : null;
@@ -55,6 +91,32 @@ export async function httpRequest<T>(path: string, options: RequestOptions = {})
         return httpRequest<T>(path, { ...options, headers: { ...headers, Authorization: `Bearer ${retryToken}` } });
       }
     }
+    // #region agent log
+    fetch("http://127.0.0.1:7658/ingest/8c12422b-b1ba-4515-b1f8-f29b4e599d6e", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "42d28e",
+      },
+      body: JSON.stringify({
+        sessionId: "42d28e",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "src/shared/api/http.ts:httpRequest",
+        message: "Non-OK HTTP response in httpRequest",
+        data: {
+          path,
+          method,
+          baseUrl: API_BASE_URL,
+          status: response.status,
+          statusText: response.statusText,
+          // We intentionally log only structured error info (no secrets).
+          errorBody: parsed,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     throw new HttpError(`Request failed: ${response.status}`, response.status, parsed);
   }
 

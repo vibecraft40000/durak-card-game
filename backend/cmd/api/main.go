@@ -10,6 +10,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -36,10 +37,14 @@ import (
 	mw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		panic(err)
+	}
 	cfg := config.Load()
 	log, err := logger.New()
 	if err != nil {
@@ -101,6 +106,22 @@ func main() {
 	paymentsRepo := payments.NewRepository(postgresPool)
 	cryptoPayHandler := cryptopay.NewHandler(cfg.CryptoPayAPIToken, cfg.CryptoPayTestnet, txRepo, redisClient, webappURL, log).
 		WithPaymentsRepo(paymentsRepo)
+	if cfg.AdminNotifyTelegramIDs != "" && cfg.TelegramBotToken != "" {
+		var notifyIDs []int64
+		for _, s := range strings.Split(cfg.AdminNotifyTelegramIDs, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			var id int64
+			if _, err := fmt.Sscanf(s, "%d", &id); err == nil {
+				notifyIDs = append(notifyIDs, id)
+			}
+		}
+		if len(notifyIDs) > 0 {
+			cryptoPayHandler = cryptoPayHandler.WithNotifyOnWithdraw(cfg.TelegramBotToken, notifyIDs)
+		}
+	}
 	paymentsClient := payments.NewClient(cfg.WalletPayAPIKey)
 	paymentsService := payments.NewService(postgresPool, paymentsRepo, paymentsClient, txRepo)
 	paymentsHandler := payments.NewHandler(paymentsService, cfg.WalletPayAPIKey)
@@ -115,7 +136,7 @@ func main() {
 
 	hub := ws.NewHub()
 	bus := ws.NewBus(redisClient, instanceID)
-	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter)
+	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter, cfg.AllowedOrigin)
 
 	router := chi.NewRouter()
 	router.Use(mw.RequestID)
@@ -141,6 +162,56 @@ func main() {
 	})
 	router.Get("/ready", healthHandler(postgresPool, redisClient, cfg))
 	router.Handle("/metrics", metrics.Handler())
+
+	// Admin API (Flask/Telegram admin panel): X-Admin-Secret header required
+	if cfg.AdminSecret != "" {
+		adminSecret := cfg.AdminSecret
+		router.Get("/admin/stats", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			count, err := userRepo.Count(r.Context())
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"users_count": count})
+		})
+		router.Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit <= 0 {
+				limit = 20
+			}
+			list, total, err := userRepo.ListPaginated(r.Context(), offset, limit)
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"users": list, "total": total})
+		})
+		router.Get("/admin/withdrawals", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit <= 0 {
+				limit = 30
+			}
+			list, err := txRepo.ListWithdrawals(r.Context(), limit)
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"withdrawals": list})
+		})
+	}
 
 	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {
 		return r.RemoteAddr
@@ -352,17 +423,29 @@ func jsonContentType(next http.Handler) http.Handler {
 	})
 }
 
-func cors(origin string) func(http.Handler) http.Handler {
+func cors(allowedOrigins string) func(http.Handler) http.Handler {
+	// Support comma-separated list; browser allows only one value in Access-Control-Allow-Origin
+	origins := make(map[string]bool)
+	for _, o := range strings.Split(allowedOrigins, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			origins[o] = true
+		}
+	}
+	allowAny := allowedOrigins == "*" || origins["*"]
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			allowOrigin := origin
-			if origin == "*" {
-				reqOrigin := r.Header.Get("Origin")
-				if reqOrigin != "" {
-					allowOrigin = reqOrigin
-				}
+			reqOrigin := strings.TrimRight(r.Header.Get("Origin"), "/")
+			var allowOrigin string
+			if allowAny || (reqOrigin != "" && origins[reqOrigin]) {
+				allowOrigin = reqOrigin
+			} else if allowedOrigins != "" && !strings.Contains(allowedOrigins, ",") {
+				allowOrigin = strings.TrimSpace(allowedOrigins)
 			}
-			w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			if allowOrigin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+			}
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
 			if r.Method == http.MethodOptions {

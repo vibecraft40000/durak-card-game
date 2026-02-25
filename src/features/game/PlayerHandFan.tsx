@@ -7,8 +7,8 @@ import { canPlayCard } from "@/entities/game/lib/canPlayCard";
 import { PlayingCard } from "@/shared/ui/PlayingCard";
 import { hapticImpact, hapticSelection } from "@/shared/lib/telegram";
 
-/** ANIMATION-SPEC: maxSpread 60°, arc layout */
-const FAN_SPREAD = 60;
+/** ANIMATION-SPEC: maxSpread 40°, более плотный веер как на макете */
+const FAN_SPREAD = 40;
 const SPRING = { type: "spring" as const, stiffness: 280, damping: 22 };
 /** Invalid drop: shake 8px, 140ms */
 const REJECT_SHAKE_PX = 8;
@@ -100,6 +100,7 @@ export const PlayerHandFan = memo(function PlayerHandFan({
         const isReject = rejectId === card.id;
         const validation = canPlayCard(card, matchState, currentUserId);
         const canDrag = canAct && !interactionLocked && validation.valid;
+         const isPlayable = validation.valid && canAct && !interactionLocked;
 
         return (
           <motion.div
@@ -141,7 +142,12 @@ export const PlayerHandFan = memo(function PlayerHandFan({
                   : { type: "spring", stiffness: 340, damping: 24 }
               }
             >
-              <PlayingCard rank={card.rank} suit={card.suit} variant="hand" />
+              <PlayingCard
+                rank={card.rank}
+                suit={card.suit}
+                variant="hand"
+                dimmed={!isPlayable}
+              />
             </motion.div>
           </motion.div>
         );

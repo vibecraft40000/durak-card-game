@@ -1,0 +1,45 @@
+# Локальная разработка: только Postgres, Redis и миграции.
+# API и фронт запускаете на хосте: go run ./cmd/api и npm run dev.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: durak
+      POSTGRES_USER: durak
+      POSTGRES_PASSWORD: durak
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U durak -d durak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    command:
+      [
+        "-path", "/migrations",
+        "-database", "postgres://durak:durak@postgres:5432/durak?sslmode=disable",
+        "up",
+      ]
+    volumes:
+      - ../backend/migrations:/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data_dev:

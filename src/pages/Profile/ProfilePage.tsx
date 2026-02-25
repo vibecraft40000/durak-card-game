@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getProfile, patchUserSettings, type UserProfile } from "@/shared/api/user";
-import { ChevronRightIcon, DepositIcon, SettingsIcon, UsersIcon, WithdrawIcon } from "@/shared/ui/Icons";
-import { ThemeToggle } from "@/shared/ui/ThemeToggle";
+import { getProfile, type UserProfile } from "@/shared/api/user";
 import { useTheme } from "@/shared/providers/ThemeProvider";
+import { ChevronRightIcon, DepositIcon, SettingsIcon, UsersIcon, WithdrawIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
 import { AppAvatar } from "@/shared/ui/Avatar";
-import { AppButton } from "@/shared/ui/Button";
+import { ThemeToggle } from "@/shared/ui/ThemeToggle";
 
 const CURRENCY = "USD" as const;
 
@@ -35,10 +34,10 @@ export function ProfilePage() {
   return (
     <section className="screen profile-screen">
       <div className="profile-head">
+        <ThemeToggle theme={theme} onToggle={toggleTheme} className="profile-head__btn" />
         <Link className="profile-head__btn icon-button" to="/profile/settings" aria-label="Настройки">
           <SettingsIcon size={18} />
         </Link>
-        <ThemeToggle theme={theme} onToggle={toggleTheme} className="profile-head__btn" />
         <Link className="profile-head__btn icon-button" to="/profile/friends" aria-label="Друзья">
           <UsersIcon size={18} />
         </Link>
@@ -47,7 +46,6 @@ export function ProfilePage() {
       <div className="profile-hero">
         <div className="avatar-badge">
           <AppAvatar name={fullName || avatarLetter} photoUrl={user?.photo_url} />
-          <span className="avatar-badge__plus">＋</span>
         </div>
         <div className="profile-name">{fullName}</div>
       </div>
@@ -69,7 +67,7 @@ export function ProfilePage() {
             style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, textDecoration: "none", color: "inherit" }}
           >
             <DepositIcon size={18} />
-            Пополнение
+            Ввод
           </Link>
           <Link
             to="/profile/withdraw"

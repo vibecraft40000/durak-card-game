@@ -54,7 +54,27 @@ export function getTelegramUser() {
 }
 
 export function getTelegramInitData() {
-  return window.Telegram?.WebApp?.initData ?? "";
+  const direct = window.Telegram?.WebApp?.initData;
+  if (direct && direct.length > 0) {
+    return direct;
+  }
+
+  // Telegram Web / Desktop can pass initData via tgWebAppData query parameter.
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("tgWebAppData") || params.get("tg_data");
+    if (raw && raw.length > 0) {
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  } catch {
+    // ignore URL parsing errors
+  }
+
+  return "";
 }
 
 /** Start param when opened via t.me/Bot/app?startapp=... */

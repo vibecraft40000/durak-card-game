@@ -101,7 +101,77 @@ func (r *Repository) SeedDeposit(userID string, amount float64) {
 	})
 }
 
-func nullIfEmpty(value string) interface{} {
+// StatsForUser возвращает агрегированную статистику по пользователю:
+// суммарные пополнения и суммарные выводы (оба значения >= 0).
+func (r *Repository) StatsForUser(ctx context.Context, userID string) (totalDeposits, totalWithdrawals float64, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	// Сумма всех подтверждённых депозитов.
+	qDeposit := `SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE user_id=$1 AND type='deposit' AND status='confirmed'`
+	start := time.Now()
+	if err = r.db.QueryRow(ctx, qDeposit, userID).Scan(&totalDeposits); err != nil {
+		metrics.ObserveDBQuery("select_user_deposits_sum", start)
+		return 0, 0, err
+	}
+	metrics.ObserveDBQuery("select_user_deposits_sum", start)
+
+	// Сумма всех подтверждённых выводов (в таблице хранятся отрицательные суммы, разворачиваем знак).
+	qWithdraw := `SELECT COALESCE(-SUM(amount), 0) FROM transactions WHERE user_id=$1 AND type='withdraw' AND status='confirmed'`
+	start = time.Now()
+	if err = r.db.QueryRow(ctx, qWithdraw, userID).Scan(&totalWithdrawals); err != nil {
+		metrics.ObserveDBQuery("select_user_withdrawals_sum", start)
+		return totalDeposits, 0, err
+	}
+	metrics.ObserveDBQuery("select_user_withdrawals_sum", start)
+	return totalDeposits, totalWithdrawals, nil
+}
+
+// WithdrawalRecord is a withdraw transaction with user info (for admin list).
+type WithdrawalRecord struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Amount      float64   `json:"amount"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// ListWithdrawals returns recent withdraw transactions with user display name (for admin).
+func (r *Repository) ListWithdrawals(ctx context.Context, limit int) ([]WithdrawalRecord, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	query := `
+SELECT t.id, t.user_id, t.amount, t.status, t.created_at,
+       COALESCE(u.username, ''), COALESCE(u.display_name, u.first_name || ' ' || u.last_name, '')
+FROM transactions t
+JOIN users u ON u.id = t.user_id
+WHERE t.type = $1
+ORDER BY t.created_at DESC
+LIMIT $2`
+	rows, err := r.db.Query(ctx, query, TypeWithdraw, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []WithdrawalRecord
+	for rows.Next() {
+		var w WithdrawalRecord
+		err := rows.Scan(&w.ID, &w.UserID, &w.Amount, &w.Status, &w.CreatedAt, &w.Username, &w.DisplayName)
+		if err != nil {
+			return nil, err
+		}
+		w.Amount = -w.Amount // stored as negative
+		list = append(list, w)
+	}
+	return list, rows.Err()
+}
+
+func nullIfEmpty(value string) any {
 	if value == "" {
 		return nil
 	}

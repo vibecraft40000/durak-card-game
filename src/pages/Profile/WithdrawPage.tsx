@@ -90,7 +90,9 @@ export function WithdrawPage() {
           </div>
         </div>
         <p className="withdraw-hint">
-          Средства будут переведены на ваш Telegram через Crypto Pay. Сумма указывается в USD, выплата в USDT.
+          После отправки заявки администратору приходит уведомление о выводе. Сумма указывается в USD, выплата в
+          USDT через @{cryptoBotUsername}. При необходимости администратор свяжется с вами в Telegram и подтвердит
+          вывод.
         </p>
         <p className="withdraw-label">Сумма вывода (USD)</p>
         <input

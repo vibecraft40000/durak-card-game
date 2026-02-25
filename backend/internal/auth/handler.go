@@ -40,15 +40,25 @@ func (h *Handler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, markErr := h.service.MarkInitDataHashUsed(r.Context(), hash)
-	if !(h.cfg.AllowDevTelegramAuth && hash == "dev") {
-		if markErr != nil {
-			http.Error(w, "replay storage error", http.StatusInternalServerError)
-			return
-		}
-		if !ok {
-			http.Error(w, "replay attack detected", http.StatusUnauthorized)
-			return
+	if h.cfg.Env == "production" && hash == "dev" {
+		http.Error(w, "dev auth is not allowed in production", http.StatusUnauthorized)
+		return
+	}
+
+	// For now we only enforce strict replay protection (single-use initData hashes)
+	// in explicit production environment. This avoids locking out users when
+	// Telegram reuses the same initData across devices/sessions during beta.
+	if h.cfg.Env == "production" {
+		ok, markErr := h.service.MarkInitDataHashUsed(r.Context(), hash)
+		if !(h.cfg.AllowDevTelegramAuth && hash == "dev") {
+			if markErr != nil {
+				http.Error(w, "replay storage error", http.StatusInternalServerError)
+				return
+			}
+			if !ok {
+				http.Error(w, "replay attack detected", http.StatusUnauthorized)
+				return
+			}
 		}
 	}
 

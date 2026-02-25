@@ -1,7 +1,10 @@
 package cryptopay
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,9 +16,9 @@ import (
 
 	"durakonline/backend/internal/payments"
 	"durakonline/backend/internal/transactions"
+	"durakonline/backend/internal/users"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/middleware"
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -62,13 +65,15 @@ func strOrEmpty(err error) string {
 const paidInvoiceTTL = 30 * 24 * time.Hour
 
 type Handler struct {
-	client       *Client
-	txRepo       *transactions.Repository
-	paymentsRepo *payments.Repository
-	redis        *redis.Client
-	token        string
-	webappURL    string
-	log          *zap.Logger
+	client         *Client
+	txRepo         *transactions.Repository
+	paymentsRepo   *payments.Repository
+	redis          *redis.Client
+	token          string
+	webappURL      string
+	log            *zap.Logger
+	notifyBotToken string
+	notifyChatIDs  []int64
 }
 
 func NewHandler(token string, testnet bool, txRepo *transactions.Repository, r *redis.Client, webappURL string, log *zap.Logger) *Handler {
@@ -86,12 +91,21 @@ func (h *Handler) WithPaymentsRepo(repo *payments.Repository) *Handler {
 	return h
 }
 
+// WithNotifyOnWithdraw sends a Telegram message to admin(s) when a withdraw succeeds.
+func (h *Handler) WithNotifyOnWithdraw(botToken string, chatIDs []int64) *Handler {
+	h.notifyBotToken = botToken
+	h.notifyChatIDs = chatIDs
+	return h
+}
+
 const withdrawLockTTL = 30 * time.Second
 
-// CreateWithdraw initiates a Crypto Pay transfer to the user (withdraw from game balance).
+// CreateWithdraw: списывает средства с баланса и создаёт заявку на ручной вывод.
+// Деньги пользователю отправляет администратор вручную (бот только уведомляет админа).
 func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		user, ok := middleware.UserFromContext(r.Context())
+		ctx := r.Context()
+		user, ok := middleware.UserFromContext(ctx)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -113,7 +127,7 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 			return
 		}
 
-		balance, err := walletService.Balance(r.Context(), user.ID)
+		balance, err := walletService.Balance(ctx, user.ID)
 		if err != nil {
 			h.log.Error("withdraw: balance check failed", zap.Error(err))
 			http.Error(w, "failed to check balance", http.StatusInternalServerError)
@@ -125,15 +139,15 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 		}
 
 		lockKey := "withdraw:lock:" + user.ID
-		okLock, err := h.redis.SetNX(r.Context(), lockKey, "1", withdrawLockTTL).Result()
+		okLock, err := h.redis.SetNX(ctx, lockKey, "1", withdrawLockTTL).Result()
 		if err != nil || !okLock {
 			http.Error(w, "withdraw in progress or too many attempts", http.StatusTooManyRequests)
 			return
 		}
-		defer h.redis.Del(r.Context(), lockKey)
+		defer h.redis.Del(ctx, lockKey)
 
-		spendID := uuid.NewString()
-		_, err = h.txRepo.Add(r.Context(), transactions.Transaction{
+		// Фиксируем транзакцию вывода (баланс уменьшается сразу).
+		_, err = h.txRepo.Add(ctx, transactions.Transaction{
 			UserID: user.ID,
 			Type:   transactions.TypeWithdraw,
 			Amount: -req.Amount,
@@ -145,35 +159,67 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 			return
 		}
 
-		tr, err := h.client.Transfer(TransferReq{
-			UserID:  user.TelegramID,
-			Asset:   "USDT",
-			Amount:  strconv.FormatFloat(req.Amount, 'f', 2, 64),
-			SpendID: spendID,
-			Comment: "Durak Online — вывод средств",
-		})
-		if err != nil {
-			_, _ = h.txRepo.Add(r.Context(), transactions.Transaction{
-				UserID: user.ID,
-				Type:   transactions.TypeDeposit,
-				Amount: req.Amount,
-				Status: transactions.StatusConfirmed,
-			})
-			h.log.Warn("withdraw: transfer failed, refunded",
-				zap.Int64("telegram_id", user.TelegramID),
-				zap.String("username", user.Username),
-				zap.Error(err))
-			http.Error(w, "transfer failed: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		// Уведомляем админа в Telegram — кто и сколько хочет вывести.
+		h.notifyWithdraw(ctx, &user, balance, req.Amount)
 
+		// Отвечаем клиенту, что заявка создана; никаких CryptoPay вызовов.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"transferId": tr.TransferID,
-			"amount":     req.Amount,
-			"asset":      tr.Asset,
-			"status":     tr.Status,
+			"status": "ok",
+			"amount": req.Amount,
 		})
+	}
+}
+
+func (h *Handler) notifyWithdraw(ctx context.Context, user *users.User, balanceBefore float64, amount float64) {
+	if h.notifyBotToken == "" || len(h.notifyChatIDs) == 0 {
+		return
+	}
+	displayName := user.DisplayName
+	if displayName == "" {
+		displayName = user.Username
+	}
+	if displayName == "" {
+		displayName = fmt.Sprintf("ID %s", user.ID[:8])
+	}
+	usernameLine := ""
+	if strings.TrimSpace(user.Username) != "" {
+		usernameLine = "@" + user.Username + "\n"
+	}
+	// Статистика по пополнениям/выводам.
+	var deposits, withdrawals float64
+	if h.txRepo != nil {
+		if d, wtot, err := h.txRepo.StatsForUser(ctx, user.ID); err == nil {
+			deposits, withdrawals = d, wtot
+		} else {
+			h.log.Warn("notify withdraw: stats failed", zap.String("user_id", user.ID), zap.Error(err))
+		}
+	}
+	balanceAfter := balanceBefore - amount
+
+	text := fmt.Sprintf(
+		"💰 <b>Заявка на вывод</b>\n\n"+
+			"Пользователь: %s\n%sTelegram ID: <code>%d</code>\n"+
+			"<a href=\"tg://user?id=%d\">Открыть профиль в Telegram</a>\n\n"+
+			"Сумма вывода: <b>%.2f USD</b>\n"+
+			"Баланс до вывода: <b>%.2f USD</b>\n"+
+			"Баланс после вывода: <b>%.2f USD</b>\n\n"+
+			"Всего пополнений: <b>%.2f USD</b>\n"+
+			"Всего выводов: <b>%.2f USD</b>",
+		displayName, usernameLine, user.TelegramID, user.TelegramID,
+		amount, balanceBefore, balanceAfter, deposits, withdrawals,
+	)
+
+	body := map[string]any{"chat_id": 0, "text": text, "parse_mode": "HTML", "disable_web_page_preview": true}
+	for _, chatID := range h.notifyChatIDs {
+		body["chat_id"] = chatID
+		raw, _ := json.Marshal(body)
+		resp, err := http.Post("https://api.telegram.org/bot"+h.notifyBotToken+"/sendMessage", "application/json", bytes.NewReader(raw))
+		if err != nil {
+			h.log.Warn("notify withdraw: send failed", zap.Int64("chat_id", chatID), zap.Error(err))
+			continue
+		}
+		resp.Body.Close()
 	}
 }
 

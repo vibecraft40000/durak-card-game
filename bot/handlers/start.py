@@ -3,6 +3,8 @@ from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import CommandStart
 
+from storage import add_subscriber
+
 router = Router(name="start")
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,9 @@ async def cmd_start(message: Message):
     user = message.from_user
     if not user:
         return
+
+    chat_id = message.chat.id if message.chat else user.id
+    add_subscriber(chat_id, user.id, user.username)
 
     user_info = {
         "id": user.id,

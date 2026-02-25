@@ -27,6 +27,8 @@ type PlayingCardProps = {
   selected?: boolean;
   placeholder?: boolean;
   interactive?: boolean;
+  /** Visually dim card to indicate it's not playable */
+  dimmed?: boolean;
   onClick?: () => void;
 };
 
@@ -38,6 +40,7 @@ export const PlayingCard = memo(function PlayingCard({
   selected = false,
   placeholder = false,
   interactive = false,
+  dimmed = false,
   onClick,
 }: PlayingCardProps) {
   const baseClass = "playing-card";
@@ -49,6 +52,7 @@ export const PlayingCard = memo(function PlayingCard({
         : "";
   const suitClass = suit ? getSuitModifier(suit) : "";
   const selectedClass = selected ? "playing-card--selected" : "";
+  const dimmedClass = dimmed ? "playing-card--dimmed" : "";
 
   if (placeholder) {
     return (
@@ -80,6 +84,7 @@ export const PlayingCard = memo(function PlayingCard({
     variantClass,
     suitClass,
     selectedClass,
+    dimmedClass,
   ]
     .filter(Boolean)
     .join(" ");

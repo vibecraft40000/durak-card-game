@@ -3,7 +3,7 @@ services:
     build: .
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
-      WEBAPP_URL: ${WEBAPP_URL:-https://your-domain.com}
+      WEBAPP_URL: ${WEBAPP_URL:-https://durakonline.duckdns.org}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
       HOST: 0.0.0.0

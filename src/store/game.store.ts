@@ -113,9 +113,10 @@ export function setMatchState(matchState: MatchStatePayload) {
 /** Only update if payload has same or newer version (discard stale out-of-order delivery) */
 export function setMatchStateIfNewer(payload: MatchStatePayload) {
   const current = state.matchState;
-  const incomingVersion = payload.version ?? 0;
-  if (current?.version != null && incomingVersion < current.version) {
-    return; // ignore stale state
+  const incomingVersion = payload.version;
+  const currentVersion = current?.version;
+  if (typeof currentVersion === "number" && incomingVersion <= currentVersion) {
+    return; // ignore stale or duplicate state
   }
   update({ matchState: payload, interactionLocked: false });
 }

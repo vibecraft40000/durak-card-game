@@ -28,6 +28,8 @@ type Config struct {
 	CryptoPayTestnet     bool
 	WalletPayAPIKey      string
 	WalletPayWebhookPath string
+	AdminSecret              string // optional: for GET /admin/stats (X-Admin-Secret)
+	AdminNotifyTelegramIDs   string // comma-separated Telegram IDs to notify on withdraw (e.g. 5521738246)
 }
 
 func Load() Config {
@@ -53,6 +55,8 @@ func Load() Config {
 		CryptoPayTestnet:     getBool("CRYPTO_PAY_TESTNET", false),
 		WalletPayAPIKey:      getEnv("WALLET_PAY_API_KEY", ""),
 		WalletPayWebhookPath: getEnv("WALLET_PAY_WEBHOOK_PATH", "/api/wallet/webhook"),
+		AdminSecret:            getEnv("ADMIN_SECRET", ""),
+		AdminNotifyTelegramIDs: getEnv("ADMIN_NOTIFY_TELEGRAM_IDS", ""),
 	}
 }
 

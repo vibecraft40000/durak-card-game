@@ -99,7 +99,11 @@ FROM payments WHERE external_id = $1`, payload.ExternalID).Scan(
 	paidAmt := webhookAmount
 	paidCur := payload.OrderAmount.CurrencyCode
 	if payload.SelectedPaymentOption != nil {
-		paidAmt, _ = parseOrderAmountUSD(payload.SelectedPaymentOption.Amount)
+		overrideAmt, err := parseOrderAmountUSD(payload.SelectedPaymentOption.Amount)
+		if err != nil {
+			return err
+		}
+		paidAmt = overrideAmt
 		paidCur = payload.SelectedPaymentOption.Amount.CurrencyCode
 	}
 

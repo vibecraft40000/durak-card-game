@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — Админка{% endblock %}
+{% block content %}
+<h1>Дашборд</h1>
+<div class="card">
+  <p>Пользователей в БД</p>
+  <p class="stat">{{ users_count }}</p>
+  {% if api_configured %}
+    {% if api_ok %}
+      <p style="color: var(--success);">API бэкенда доступен</p>
+    {% else %}
+      <p class="error">API бэкенда не ответил. Проверьте API_BASE_URL и ADMIN_SECRET.</p>
+    {% endif %}
+  {% else %}
+  <p style="color: #565f89;">Задайте API_BASE_URL и ADMIN_SECRET в .env для статистики с бэкенда.</p>
+  {% endif %}
+</div>
+<div class="card">
+  <p><a href="{{ url_for('users.index') }}">Список пользователей</a> — просмотр из API.</p>
+  <p><a href="{{ url_for('settings.index') }}">Настройки</a> — конфигурация подключения к API.</p>
+</div>
+{% endblock %}

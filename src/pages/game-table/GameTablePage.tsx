@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { applyMockMatchAction, isMockApiEnabled } from "@/mocks/mockApi";
 import type { MatchActionType, Room } from "@/entities/match/types";
+import type { Card } from "@/entities/card/types";
 import { joinGameRoom } from "@/processes/joinGame.process";
 import { getRoom, leaveRoom } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
@@ -28,6 +29,10 @@ import {
   selectCanPass,
   selectCanTake,
   selectIsMyTurn,
+  selectCurrentPhase,
+  selectOrderedSeats,
+  selectIsAttacker,
+  selectIsDefender,
 } from "@/entities/game/model/selectors";
 import { useSwipeDown } from "@/shared/hooks/useSwipeDown";
 import {
@@ -50,6 +55,7 @@ export function GameTablePage() {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [profileBalance, setProfileBalance] = useState<number | null>(null);
+  const [intentError, setIntentError] = useState<{ text: string; code?: string } | null>(null);
   const currency = "USD";
   const tableZoneRef = useRef<HTMLDivElement>(null);
 
@@ -62,21 +68,59 @@ export function GameTablePage() {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    function onIntentError(ev: Event) {
+      const ce = ev as CustomEvent;
+      const detail = (ce.detail ?? {}) as { text?: string; code?: string; raw?: unknown };
+      const text = detail.text || "Ошибка выполнения действия.";
+      const code = detail.code;
+
+      // eslint-disable-next-line no-console
+      console.warn("[tma:intentError] received", detail);
+
+      setIntentError({ text, code });
+
+      if (code === "kicked") {
+        window.setTimeout(() => {
+          navigate("/play");
+        }, 800);
+      }
+    }
+
+    window.addEventListener("tma:intentError", onIntentError as EventListener);
+    return () => {
+      window.removeEventListener("tma:intentError", onIntentError as EventListener);
+    };
+  }, [navigate]);
+
   const matchState = gameState.matchState;
   useEffect(() => {
-    if (matchState?.status === "finished") {
+    if (matchState?.finish) {
       void getProfile()
         .then((r) => setProfileBalance(r.balance))
         .catch(() => undefined);
     }
-  }, [matchState?.status]);
-  const players = matchState?.players ?? [];
+  }, [matchState?.finish]);
+
+  const currentPhase = useMemo(
+    () => selectCurrentPhase(gameState),
+    [gameState],
+  );
+
+  const orderedSeats = useMemo(
+    () => selectOrderedSeats(gameState),
+    [gameState],
+  );
+  const meSeat = orderedSeats[0];
+  const seatOpponents = orderedSeats.slice(1);
+
+  const players = (matchState as any)?.players ?? [];
   const currentPlayer = useMemo(
-    () => players.find((player) => player.id === currentUserId) ?? players[0],
+    () => players.find((player: any) => player.id === currentUserId) ?? players[0],
     [currentUserId, players],
   );
   const opponents = useMemo(
-    () => players.filter((player) => player.id !== currentPlayer?.id),
+    () => players.filter((player: any) => player.id !== currentPlayer?.id),
     [currentPlayer?.id, players],
   );
   const hasDetailedHand = Boolean(currentPlayer?.hand?.length);
@@ -104,23 +148,44 @@ export function GameTablePage() {
     () => selectCanPass(gameState, currentUserId),
     [gameState, currentUserId],
   );
-  const tablePairs = useMemo(() => buildTablePairs(matchState?.tableCards ?? []), [matchState?.tableCards]);
-  const winnerName = useMemo(() => {
-    if (!matchState?.winnerPlayerId) {
-      return null;
+  const tablePairs = useMemo(() => {
+    if (!matchState) return [];
+    if (matchState.tablePiles && matchState.tablePiles.length > 0) {
+      return matchState.tablePiles;
     }
-    const winner = players.find((player) => player.id === matchState.winnerPlayerId);
-    return winner?.displayName ?? winner?.username ?? "Игрок";
-  }, [matchState?.winnerPlayerId, players]);
+    const legacyCards = (matchState as any).tableCards as Card[] | undefined;
+    if (legacyCards && legacyCards.length > 0) {
+      return buildTablePairs(legacyCards);
+    }
+    return [];
+  }, [matchState]);
 
-  const turnPlayerName = useMemo(() => {
-    if (!matchState?.turnPlayerId) return null;
-    const p = players.find((x) => x.id === matchState.turnPlayerId);
-    return p?.displayName ?? p?.username ?? "Игрок";
-  }, [matchState?.turnPlayerId, players]);
-  const isWinner = matchState?.winnerPlayerId && currentPlayer
-    ? matchState.winnerPlayerId === currentPlayer.id
-    : false;
+  const finish = matchState?.finish;
+  const mainWinnerId = finish?.places?.[0];
+  const mainWinnerSeat = mainWinnerId && matchState?.seats
+    ? matchState.seats.find((seat) => seat.id === mainWinnerId)
+    : undefined;
+  const winnerName: string | null = mainWinnerSeat?.name ?? null;
+
+  const myPayout =
+    finish && currentUserId ? finish.payouts[currentUserId] ?? 0 : 0;
+  const isWinner = !!finish && myPayout > 0;
+
+  const turnPlayerName: string | null = useMemo(() => {
+    if (!matchState || typeof matchState.turnSeatIndex !== "number") return null;
+    const seats = matchState.seats;
+    if (!seats || !seats[matchState.turnSeatIndex]) return null;
+    return seats[matchState.turnSeatIndex].name ?? null;
+  }, [matchState]);
+
+  const isAttackerRole = useMemo(
+    () => selectIsAttacker(gameState),
+    [gameState],
+  );
+  const isDefenderRole = useMemo(
+    () => selectIsDefender(gameState),
+    [gameState],
+  );
 
   useEffect(() => {
     if (!id) {
@@ -151,7 +216,7 @@ export function GameTablePage() {
   }, [id]);
 
   useEffect(() => {
-    if (!matchState?.turnEndsAt || matchState.status !== "playing") {
+    if (!matchState?.turnEndsAt || currentPhase !== "playing") {
       setSecondsLeft(null);
       return;
     }
@@ -164,7 +229,7 @@ export function GameTablePage() {
     tick();
     const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
-  }, [matchState?.status, matchState?.turnEndsAt, matchState?.turnPlayerId]);
+  }, [currentPhase, matchState?.turnEndsAt]);
 
   const interactionLocked = gameState.interactionLocked ?? false;
   const swipeTake = useSwipeDown(() => {
@@ -188,23 +253,24 @@ export function GameTablePage() {
       }
       return;
     }
-    const selectedCard =
-      action === "attack" || action === "defend" ? { cardId } : {};
-    const expectedVersion =
-      matchState?.version != null ? { expectedVersion: matchState.version } : {};
-    const actionId = crypto.randomUUID();
+    const intentPayload: Record<string, unknown> = { roomId: id };
+    if (cardId && (action === "attack" || action === "defend")) {
+      intentPayload.cardId = cardId;
+    }
 
     hapticImpact("medium");
-    wsClient.send({
-      type: "make_move",
-      payload: {
-        roomId: id,
-        action: toWireAction(action),
-        ...selectedCard,
-        ...expectedVersion,
-        actionId,
-      },
-    });
+    wsClient.sendIntent(
+      action === "attack"
+        ? "playAttack"
+        : action === "defend"
+          ? "playDefend"
+          : action === "take"
+            ? "take"
+            : action === "pass"
+              ? "pass"
+              : "pass",
+      intentPayload,
+    );
     if (action === "attack" || action === "defend") {
       setSelectedCardId(null);
     }
@@ -213,6 +279,20 @@ export function GameTablePage() {
   return (
     <section className="screen game-table-screen">
       <ReconnectOverlay />
+      {intentError && (
+        <div className="game-intent-error-banner" role="alert" aria-live="polite">
+          <div className="game-intent-error-banner__content">
+            <span>{intentError.text}</span>
+            <button
+              type="button"
+              className="game-intent-error-banner__close"
+              onClick={() => setIntentError(null)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       {interactionLocked && (
         <div className="reconnect-overlay" role="status" aria-live="polite">
           <div className="reconnect-overlay__content">
@@ -226,7 +306,7 @@ export function GameTablePage() {
           className="icon-button"
           aria-label="Назад"
           onClick={() => {
-            if (matchState?.status === "playing") {
+            if (currentPhase === "playing") {
               setIsExitModalOpen(true);
             } else {
               navigate("/play");
@@ -285,39 +365,50 @@ export function GameTablePage() {
               </div>
               <div className="game-board__meta">
                 <div className="game-board__trump">
-                  {matchState?.trumpCard ? (
-                    <PlayingCard
-                      rank={matchState.trumpCard.rank}
-                      suit={matchState.trumpCard.suit}
-                      variant="mini"
-                    />
-                  ) : (
-                    formatSuit(matchState?.trumpSuit)
-                  )}
+                  {formatSuit(matchState?.trumpSuit)}
                 </div>
                 <span>{secondsLeft !== null ? `${secondsLeft}с` : "..."}</span>
               </div>
             </div>
 
             <div className="game-board__opponents">
-              {opponents.slice(0, 4).map((player, index) => (
-                <div
-                  className={`game-opponent ${matchState?.turnPlayerId === player.id ? "game-opponent--turn" : ""} ${matchState?.turnPlayerId === player.id && secondsLeft != null && secondsLeft <= 5 ? "game-opponent--urgent" : ""}`}
-                  key={player.id}
-                >
-                  <AppAvatar
-                    name={player.displayName ?? player.username ?? `Игрок ${index + 1}`}
-                    photoUrl={player.photoUrl}
-                    className="game-opponent__avatar"
-                  />
-                  <div className="game-opponent__name">
-                    {player.displayName ?? player.username ?? `Игрок ${index + 1}`}
-                  </div>
-                  <div className="game-opponent__cards" title="Карт на руке">
-                    {player.handCount}
-                  </div>
-                </div>
-              ))}
+              {seatOpponents.length > 0
+                ? seatOpponents.slice(0, 4).map((seat, index) => (
+                    <div
+                      className="game-opponent"
+                      key={seat.id}
+                    >
+                      <AppAvatar
+                        name={seat.name ?? `Игрок ${index + 1}`}
+                        photoUrl={seat.avatarUrl}
+                        className="game-opponent__avatar"
+                      />
+                      <div className="game-opponent__name">
+                        {seat.name ?? `Игрок ${index + 1}`}
+                      </div>
+                      <div className="game-opponent__cards" title="Карт на руке">
+                        {seat.cardCount}
+                      </div>
+                    </div>
+                  ))
+                : opponents.slice(0, 4).map((player: any, index: number) => (
+                    <div
+                      className="game-opponent"
+                      key={player.id}
+                    >
+                      <AppAvatar
+                        name={player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                        photoUrl={player.photoUrl}
+                        className="game-opponent__avatar"
+                      />
+                      <div className="game-opponent__name">
+                        {player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                      </div>
+                      <div className="game-opponent__cards" title="Карт на руке">
+                        {player.handCount}
+                      </div>
+                    </div>
+                  ))}
             </div>
 
             <div
@@ -327,24 +418,27 @@ export function GameTablePage() {
             >
               {tablePairs.length ? (
                 <motion.div layout className="table-pairs">
-                  {tablePairs.map((pair, index) => (
-                    <div className="table-pairs__item" key={`pair-${index}`}>
-                      <PlayingCard
-                        suit={pair.attack.suit}
-                        rank={pair.attack.rank}
-                        variant="table"
-                      />
-                      {pair.defense ? (
+                  {tablePairs.map((pair, index) => {
+                    const defenseCard = (pair as any).defense ?? (pair as any).defend;
+                    return (
+                      <div className="table-pairs__item" key={`pair-${index}`}>
                         <PlayingCard
-                          suit={pair.defense.suit}
-                          rank={pair.defense.rank}
+                          suit={pair.attack.suit}
+                          rank={pair.attack.rank}
                           variant="table"
                         />
-                      ) : (
-                        <PlayingCard placeholder variant="table" />
-                      )}
-                    </div>
-                  ))}
+                        {defenseCard ? (
+                          <PlayingCard
+                            suit={defenseCard.suit}
+                            rank={defenseCard.rank}
+                            variant="table"
+                          />
+                        ) : (
+                          <PlayingCard placeholder variant="table" />
+                        )}
+                      </div>
+                    );
+                  })}
                 </motion.div>
               ) : (
                 <div className="game-board__table-empty">Стол пока пуст</div>
@@ -372,14 +466,22 @@ export function GameTablePage() {
                 className={`game-opponent game-opponent--me ${isMyTurn ? "game-opponent--turn" : ""} ${isMyTurn && secondsLeft != null && secondsLeft <= 5 ? "game-opponent--urgent" : ""}`}
               >
                 <AppAvatar
-                  name={currentPlayer?.displayName ?? currentPlayer?.username ?? "Вы"}
-                  photoUrl={currentPlayer?.photoUrl}
+                  name={meSeat?.name ?? currentPlayer?.displayName ?? currentPlayer?.username ?? "Вы"}
+                  photoUrl={meSeat?.avatarUrl ?? currentPlayer?.photoUrl}
                   className="game-opponent__avatar"
                 />
-                <span className="game-opponent__name">Вы</span>
-                {currentPlayer && (
-                  <div className="game-opponent__cards">{currentPlayer.handCount}</div>
-                )}
+                <div className="game-opponent__info">
+                  <span className="game-opponent__name">Вы</span>
+                  {isAttackerRole && (
+                    <span className="game-opponent__role">Атакуете</span>
+                  )}
+                  {isDefenderRole && !isAttackerRole && (
+                    <span className="game-opponent__role">Защищаетесь</span>
+                  )}
+                </div>
+                <div className="game-opponent__cards">
+                  {meSeat?.cardCount ?? currentPlayer?.handCount ?? 0}
+                </div>
               </div>
             </div>
             <div className="card__label">Ваши карты</div>
@@ -399,7 +501,7 @@ export function GameTablePage() {
               ) : (
                 <div className="cards-grid cards-grid--hand">
                   {hasDetailedHand
-                    ? currentPlayer.hand?.map((card) => (
+                    ? currentPlayer.hand?.map((card: Card) => (
                         <PlayingCard
                           key={card.id}
                           rank={card.rank}
@@ -500,15 +602,51 @@ export function GameTablePage() {
             )}
           </AppCard>
 
-          {matchState?.status === "finished" && (
+          {finish && (
             <div className="result-card">
-              <div className="result-card__title">{isWinner ? "Победа!" : "Игра завершена"}</div>
+              <div className="result-card__title">
+                {isWinner ? "Победа!" : "Игра завершена"}
+              </div>
               <div className="result-card__message">
                 {isWinner && gameState.matchFinishedAbandoned
                   ? "Соперник не вернулся. Победа."
                   : winnerName
                     ? `Победитель: ${winnerName}`
                     : "Ожидание итогового расчета."}
+              </div>
+              <div className="result-card__summary">
+                <div>Банк: {finish.bank.toFixed(2)} USD</div>
+                <div>Комиссия: {finish.commission.toFixed(2)} USD</div>
+                <div>Ваш выигрыш: {myPayout.toFixed(2)} USD</div>
+              </div>
+              <div className="result-card__places">
+                <div className="result-card__places-title">Результаты игроков</div>
+                <div className="result-card__places-list">
+                  {finish.places.map((playerId, index) => {
+                    const seat = matchState?.seats?.find((s) => s.id === playerId);
+                    const name = seat?.name ?? playerId;
+                    const payout = finish.payouts[playerId] ?? 0;
+                    const placeNumber = index + 1;
+                    const isMeRow = currentUserId === playerId;
+                    return (
+                      <div
+                        key={playerId}
+                        className={`result-card__place-row ${isMeRow ? "result-card__place-row--me" : ""}`}
+                      >
+                        <div className="result-card__place-left">
+                          <span className="result-card__place-number">{placeNumber}</span>
+                          <span className="result-card__place-name">
+                            {name}
+                            {isMeRow ? " (Вы)" : ""}
+                          </span>
+                        </div>
+                        <div className="result-card__place-right">
+                          {payout !== 0 ? `${payout.toFixed(2)} USD` : "—"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
               <button
                 className="button button--primary"
@@ -561,7 +699,7 @@ function formatSuit(suit?: string) {
   return `${getSuitSymbol(suit)} ${suit}`;
 }
 
-function buildTablePairs(cards: Array<{ id: string; suit: string; rank: string }>) {
+function buildTablePairs(cards: Card[]) {
   const pairs: Array<{
     attack: { id: string; suit: string; rank: string };
     defense?: { id: string; suit: string; rank: string };

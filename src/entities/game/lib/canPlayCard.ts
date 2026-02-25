@@ -31,42 +31,53 @@ function cardBeats(attack: CardLike, defend: CardLike, trumpSuit: string): boole
   return rankValue(defend.rank) > rankValue(attack.rank);
 }
 
-/** Attack card rank matches any attack card on table (for подкидывание). */
-function rankMatchesTable(card: CardLike, tableCards: CardLike[]): boolean {
-  for (let i = 0; i < tableCards.length; i += 2) {
-    if (tableCards[i] && tableCards[i].rank === card.rank) return true;
-  }
-  return false;
-}
-
 export function canPlayCard(
   card: Card,
   state: MatchStatePayload | null,
   currentUserId: string | null,
 ): { valid: boolean; action?: "attack" | "defend" } {
-  if (!state || !currentUserId || state.status !== "playing") return { valid: false };
-  if (state.turnPlayerId !== currentUserId) return { valid: false };
+  if (!state || !currentUserId) return { valid: false };
+  if (state.phase !== "playing") return { valid: false };
 
-  const phase = state.phase ?? "attack";
-  const tableCards = state.tableCards ?? [];
+  const myIndex = typeof state.mySeatIndex === "number" ? state.mySeatIndex : -1;
+  if (myIndex < 0 || !state.seats || !state.seats[myIndex]) {
+    return { valid: false };
+  }
+
+  const piles = state.tablePiles ?? [];
   const trumpSuit = state.trumpSuit ?? "";
 
-  if (phase === "attack") {
-    const numPairs = Math.floor(tableCards.length / 2);
-    const hasUnpairedAttack = tableCards.length % 2 === 1;
-    if (tableCards.length === 0 || (numPairs > 0 && !hasUnpairedAttack)) {
+  const isAttacker = state.attackerSeat === myIndex;
+  const isDefender = state.defenderSeat === myIndex;
+
+  // Defender logic: can we beat at least one open attack on table?
+  if (isDefender) {
+    const openAttacks = piles.filter((p) => !p.defend);
+    if (!openAttacks.length) return { valid: false };
+
+    // For now, target the last open attack (closest to current interaction)
+    const target = openAttacks[openAttacks.length - 1].attack;
+    return cardBeats(target, card, trumpSuit) ? { valid: true, action: "defend" } : { valid: false };
+  }
+
+  // Attacker logic: first throw or подкидывание by rank
+  if (isAttacker) {
+    if (piles.length >= state.capacityOnTable) return { valid: false };
+
+    // First attack: any card is allowed
+    if (piles.length === 0) {
       return { valid: true, action: "attack" };
     }
-    if (hasUnpairedAttack) {
-      return rankMatchesTable(card, tableCards) ? { valid: true, action: "attack" } : { valid: false };
+
+    // Subsequent throws: rank must be allowed by server rules
+    const allowedRanks = state.allowedRanks ?? [];
+    if (allowedRanks.includes(card.rank)) {
+      return { valid: true, action: "attack" };
     }
+
+    return { valid: false };
   }
 
-  if (phase === "defend") {
-    const lastAttack = tableCards[tableCards.length - 1];
-    if (!lastAttack) return { valid: false };
-    return cardBeats(lastAttack, card, trumpSuit) ? { valid: true, action: "defend" } : { valid: false };
-  }
-
+  // Neither attacker nor defender: cannot play a card
   return { valid: false };
 }
