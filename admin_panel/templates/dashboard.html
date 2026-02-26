@@ -2,9 +2,10 @@
 {% block title %}Дашборд — Админка{% endblock %}
 {% block content %}
 <h1>Дашборд</h1>
+
 <div class="card">
   <p>Пользователей в БД</p>
-  <p class="stat">{{ users_count }}</p>
+  <p class="stat">{{ metrics.users_count }}</p>
   {% if api_configured %}
     {% if api_ok %}
       <p style="color: var(--success);">Backend API доступен</p>
@@ -14,6 +15,38 @@
   {% else %}
     <p class="hint">Укажите API_BASE_URL и ADMIN_SECRET в .env.</p>
   {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Статистика по ТЗ</h2>
+  <table>
+    <tbody>
+      <tr>
+        <th>Всего игр</th>
+        <td>{{ metrics.games_total }}</td>
+        <th>Активные игры</th>
+        <td>{{ metrics.games_active }}</td>
+      </tr>
+      <tr>
+        <th>Завершенные игры</th>
+        <td>{{ metrics.games_finished }}</td>
+        <th>Ручные корректировки</th>
+        <td>{{ metrics.admin_adjust_count }}</td>
+      </tr>
+      <tr>
+        <th>Пополнения (шт.)</th>
+        <td>{{ metrics.deposits_count }}</td>
+        <th>Пополнения (сумма)</th>
+        <td>{{ "%.2f"|format(metrics.deposits_amount|float) }}</td>
+      </tr>
+      <tr>
+        <th>Выводы (шт.)</th>
+        <td>{{ metrics.withdrawals_count }}</td>
+        <th>Выводы (сумма)</th>
+        <td>{{ "%.2f"|format(metrics.withdrawals_amount|float) }}</td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 
 <div class="card">

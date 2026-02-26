@@ -181,6 +181,10 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 func (r *Repository) UpdateLanguage(ctx context.Context, id, language string) (User, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language == "ua" {
+		language = "uk"
+	}
 	valid := map[string]bool{"ru": true, "uk": true, "en": true}
 	if !valid[language] {
 		language = "ru"

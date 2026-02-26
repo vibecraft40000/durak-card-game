@@ -172,12 +172,27 @@ func main() {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			count, err := userRepo.Count(r.Context())
+			usersCount, err := userRepo.Count(r.Context())
 			if err != nil {
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"users_count": count})
+			stats, err := txRepo.GetAdminStats(r.Context())
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"users_count":       usersCount,
+				"games_total":       stats.GamesTotal,
+				"games_active":      stats.GamesActive,
+				"games_finished":    stats.GamesFinished,
+				"deposits_count":    stats.DepositsCount,
+				"deposits_amount":   stats.DepositsAmount,
+				"withdrawals_count": stats.WithdrawalsCount,
+				"withdrawals_amount": stats.WithdrawalsAmount,
+				"admin_adjust_count": stats.AdminAdjustCount,
+			})
 		})
 		router.Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Admin-Secret") != adminSecret {

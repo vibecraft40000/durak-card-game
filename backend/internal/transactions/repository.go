@@ -295,3 +295,48 @@ LIMIT $1`
 	}
 	return out, rows.Err()
 }
+
+type AdminStats struct {
+	GamesTotal        int64   `json:"games_total"`
+	GamesActive       int64   `json:"games_active"`
+	GamesFinished     int64   `json:"games_finished"`
+	DepositsCount     int64   `json:"deposits_count"`
+	DepositsAmount    float64 `json:"deposits_amount"`
+	WithdrawalsCount  int64   `json:"withdrawals_count"`
+	WithdrawalsAmount float64 `json:"withdrawals_amount"`
+	AdminAdjustCount  int64   `json:"admin_adjust_count"`
+}
+
+func (r *Repository) GetAdminStats(ctx context.Context) (AdminStats, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	query := `
+SELECT
+	(SELECT COUNT(*) FROM matches) AS games_total,
+	(SELECT COUNT(*) FROM matches WHERE status = 'active') AS games_active,
+	(SELECT COUNT(*) FROM matches WHERE status = 'finished') AS games_finished,
+	(SELECT COUNT(*) FROM transactions WHERE type = 'deposit' AND status = 'confirmed') AS deposits_count,
+	(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'deposit' AND status = 'confirmed')::float8 AS deposits_amount,
+	(SELECT COUNT(*) FROM transactions WHERE type = 'withdraw' AND status = 'confirmed') AS withdrawals_count,
+	(SELECT COALESCE(-SUM(amount), 0) FROM transactions WHERE type = 'withdraw' AND status = 'confirmed')::float8 AS withdrawals_amount,
+	(SELECT COUNT(*) FROM transactions WHERE type::text = 'admin_adjust' AND status = 'confirmed') AS admin_adjust_count`
+
+	var stats AdminStats
+	start := time.Now()
+	err := r.db.QueryRow(ctx, query).Scan(
+		&stats.GamesTotal,
+		&stats.GamesActive,
+		&stats.GamesFinished,
+		&stats.DepositsCount,
+		&stats.DepositsAmount,
+		&stats.WithdrawalsCount,
+		&stats.WithdrawalsAmount,
+		&stats.AdminAdjustCount,
+	)
+	metrics.ObserveDBQuery("admin_stats", start)
+	if err != nil {
+		return AdminStats{}, err
+	}
+	return stats, nil
+}
