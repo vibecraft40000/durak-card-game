@@ -1,10 +1,10 @@
-import { NavLink } from "react-router-dom";
+п»їimport { NavLink } from "react-router-dom";
 import { PlayIcon, PlusIcon, UserIcon } from "@/shared/ui/Icons";
 
 const NAV_ITEMS = [
-  { to: "/play", label: "Играть", icon: PlayIcon },
-  { to: "/create", label: "Создать игру", icon: PlusIcon },
-  { to: "/profile", label: "Профиль", icon: UserIcon },
+  { to: "/play", label: "РРіСЂР°С‚СЊ", icon: PlayIcon, end: true },
+  { to: "/play/create", label: "РЎРѕР·РґР°С‚СЊ РёРіСЂСѓ", icon: PlusIcon, end: false },
+  { to: "/profile", label: "РџСЂРѕС„РёР»СЊ", icon: UserIcon, end: false },
 ];
 
 export function BottomNav() {
@@ -14,6 +14,7 @@ export function BottomNav() {
         <NavLink
           key={item.to}
           to={item.to}
+          end={item.end}
           className={({ isActive }) => `bottom-nav__item ${isActive ? "bottom-nav__item--active" : ""}`}
         >
           <item.icon size={20} />

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/games"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
@@ -94,17 +95,22 @@ func (s *Service) Ready(ctx context.Context, roomID string, userID string) (Room
 		}
 		_ = s.repo.AddReadyUser(ctx, roomID, userID)
 		room.ReadyUsers, _ = s.repo.GetReadyUsers(ctx, roomID)
+		requiredPlayers := room.MaxPlayers
+		if shouldAutofillWithBot(room) {
+			requiredPlayers = 2
+		}
+		willStart := len(room.Players) == requiredPlayers && len(room.ReadyUsers) == requiredPlayers && room.Status == StatusWaiting
 		log.Printf("[ready] room=%s user=%s players=%d ready=%d status=%s willStart=%v",
 			roomID, userID, len(room.Players), len(room.ReadyUsers), room.Status,
-			len(room.Players) == 2 && len(room.ReadyUsers) == 2 && room.Status == StatusWaiting)
+			willStart)
 		if !shouldAutofillWithBot(room) && len(room.Players) < 2 {
 			if err := s.repo.Save(ctx, room); err != nil {
 				return Room{}, fmt.Errorf("save room: %w", err)
 			}
 			return room, ErrNeedOpponent
 		}
-		// Bot mode or both human players ready: auto-start when second confirms
-		if len(room.Players) == 2 && len(room.ReadyUsers) == 2 && room.Status == StatusWaiting {
+		// Auto-start when all configured players joined and confirmed.
+		if willStart {
 			return s.startMatchLocked(ctx, room)
 		}
 		if err := s.repo.Save(ctx, room); err != nil {
@@ -127,7 +133,11 @@ func (s *Service) StartGame(ctx context.Context, roomID string, userID string) (
 		if room.Players[0] != userID {
 			return Room{}, ErrNotRoomCreator
 		}
-		if len(room.Players) < 2 || len(room.ReadyUsers) < 2 || room.Status != StatusWaiting {
+		requiredPlayers := room.MaxPlayers
+		if shouldAutofillWithBot(room) {
+			requiredPlayers = 2
+		}
+		if len(room.Players) != requiredPlayers || len(room.ReadyUsers) != requiredPlayers || room.Status != StatusWaiting {
 			return Room{}, ErrNotAllReady
 		}
 		return s.startMatchLocked(ctx, room)
@@ -171,7 +181,11 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 			heldPlayers = append(heldPlayers, playerID)
 		}
 	}
-	if _, err := s.games.StartMatch(ctx, matchID, room.Stake, room.Mode, room.Players); err != nil {
+	cfg := engine.GameConfig{
+		DeckSize: room.Deck,
+		Mode:     room.Mode,
+	}
+	if _, err := s.games.StartMatchWithConfig(ctx, matchID, room.Stake, cfg, room.Players); err != nil {
 		log.Printf("[start] StartMatch failed room=%s match=%s err=%v", room.ID, matchID, err)
 		rollbackHolds()
 		_ = s.repo.ReleaseStartLock(ctx, room.ID)
@@ -348,3 +362,4 @@ end
 return 0`, []string{key}, token).Err()
 	}, nil
 }
+

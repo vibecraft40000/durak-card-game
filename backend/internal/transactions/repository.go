@@ -18,6 +18,7 @@ const (
 	TypeBetHold    Type = "bet_hold"
 	TypeWin        Type = "win"
 	TypeCommission Type = "commission"
+	TypeAdminAdjust Type = "admin_adjust"
 
 	StatusPending   Status = "pending"
 	StatusConfirmed Status = "confirmed"
@@ -176,4 +177,121 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+type AdminAuditLog struct {
+	ID           string     `json:"id"`
+	Actor        string     `json:"actor"`
+	Action       string     `json:"action"`
+	TargetUserID string     `json:"target_user_id"`
+	Amount       *float64   `json:"amount,omitempty"`
+	Reason       string     `json:"reason"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (r *Repository) AddAdminAudit(ctx context.Context, actor, action, targetUserID string, amount *float64, reason string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := r.db.Exec(ctx, `
+INSERT INTO admin_audit_logs (id, actor, action, target_user_id, amount, reason, created_at)
+VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
+		actor, action, targetUserID, amount, reason,
+	)
+	metrics.ObserveDBQuery("insert_admin_audit_log", start)
+	return err
+}
+
+type OperationLogItem struct {
+	Kind        string    `json:"kind"`
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UserID      string    `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Action      string    `json:"action"`
+	Amount      float64   `json:"amount"`
+	Details     string    `json:"details"`
+}
+
+func (r *Repository) ListOperationLogs(ctx context.Context, limit int) ([]OperationLogItem, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	query := `
+SELECT *
+FROM (
+    SELECT
+        'transaction' AS kind,
+        t.id::text AS id,
+        t.created_at AS created_at,
+        t.user_id::text AS user_id,
+        COALESCE(u.username, '') AS username,
+        COALESCE(u.display_name, '') AS display_name,
+        t.type::text AS action,
+        t.amount::float8 AS amount,
+        t.status::text AS details
+    FROM transactions t
+    LEFT JOIN users u ON u.id = t.user_id
+
+    UNION ALL
+
+    SELECT
+        'admin_action' AS kind,
+        a.id::text AS id,
+        a.created_at AS created_at,
+        a.target_user_id::text AS user_id,
+        COALESCE(u.username, '') AS username,
+        COALESCE(u.display_name, '') AS display_name,
+        a.action AS action,
+        COALESCE(a.amount, 0)::float8 AS amount,
+        COALESCE(a.reason, '') AS details
+    FROM admin_audit_logs a
+    LEFT JOIN users u ON u.id = a.target_user_id
+
+    UNION ALL
+
+    SELECT
+        'game_result' AS kind,
+        g.id::text AS id,
+        g.created_at AS created_at,
+        g.user_id::text AS user_id,
+        COALESCE(u.username, '') AS username,
+        COALESCE(u.display_name, '') AS display_name,
+        'match_result' AS action,
+        g.profit::float8 AS amount,
+        ('match:' || g.match_id::text) AS details
+    FROM game_results g
+    LEFT JOIN users u ON u.id = g.user_id
+) x
+ORDER BY created_at DESC
+LIMIT $1`
+
+	rows, err := r.db.Query(ctx, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]OperationLogItem, 0, limit)
+	for rows.Next() {
+		var item OperationLogItem
+		if err := rows.Scan(
+			&item.Kind,
+			&item.ID,
+			&item.CreatedAt,
+			&item.UserID,
+			&item.Username,
+			&item.DisplayName,
+			&item.Action,
+			&item.Amount,
+			&item.Details,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }

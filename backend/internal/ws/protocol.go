@@ -17,6 +17,8 @@ type GameStateDTO struct {
 	MatchID        string        `json:"matchId"`
 	Version        int64         `json:"version"`
 	Phase          string        `json:"phase"`
+	DeckType       int           `json:"deckType,omitempty"`
+	Mode           string        `json:"mode,omitempty"`
 	Players        []PlayerDTO   `json:"players"`
 	TableCards     []engine.Card `json:"tableCards"`
 	TrumpSuit      string        `json:"trumpSuit"`
@@ -25,6 +27,10 @@ type GameStateDTO struct {
 	TurnEndsAt     int64         `json:"turnEndsAt"`
 	Status         string        `json:"status"`
 	WinnerPlayerID string        `json:"winnerPlayerId,omitempty"`
+	WinnerPlayerIDs []string     `json:"winnerPlayerIds,omitempty"`
+	IsDraw         bool          `json:"isDraw,omitempty"`
+	FinishGroups   [][]string    `json:"finishGroups,omitempty"`
+	Shuler         map[string]any `json:"shuler,omitempty"`
 }
 
 type PlayerDTO struct {

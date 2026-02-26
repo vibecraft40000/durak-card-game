@@ -48,7 +48,7 @@ export function LobbyPage() {
       {!isLoading && !error && rooms.length === 0 && (
         <div className="card">
           <div className="card__hint">Активных столов пока нет. Создайте первый.</div>
-          <Link className="button button--primary" to="/create">
+          <Link className="button button--primary" to="/play/create">
             Создать игру
           </Link>
         </div>

@@ -192,6 +192,18 @@ a {
   .play-main-actions__join-row .button {
     width: 100%;
   }
+
+  .game-chat__quick {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .game-chat__composer {
+    grid-template-columns: 1fr;
+  }
+
+  .game-chat__composer .button {
+    width: 100%;
+  }
 }
 
 .quick-filter-row {
@@ -409,6 +421,122 @@ a {
 .create-game__submit {
   margin-top: var(--space-4);
   font-size: var(--font-size-body);
+}
+
+.create-screen--wizard {
+  gap: var(--space-10);
+}
+
+.create-form--wizard {
+  gap: var(--space-10);
+}
+
+.create-flow__progress {
+  display: grid;
+  gap: 8px;
+}
+
+.create-flow__step {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--color-border-accent);
+  border-radius: var(--radius-input);
+  background: var(--color-btn-secondary);
+  color: var(--color-text-hint);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.create-flow__step--active {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.create-flow__step--done {
+  border-color: rgba(69, 208, 142, 0.45);
+  color: #b9ffd8;
+}
+
+.create-flow__step-index {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-small);
+  font-weight: var(--font-weight-semibold);
+}
+
+.create-flow__step-title {
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+}
+
+.create-flow__chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.create-flow__mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.create-flow__shuler-card {
+  border-color: rgba(235, 94, 106, 0.5);
+}
+
+.create-flow__shuler-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: var(--font-weight-semibold);
+}
+
+.create-flow__switch {
+  width: 52px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-accent);
+  background: var(--color-btn-secondary);
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.create-flow__switch--on {
+  border-color: rgba(235, 94, 106, 0.8);
+  background: rgba(117, 22, 29, 0.65);
+}
+
+.create-flow__switch-knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #fff;
+  transform: translateX(0);
+  transition: transform 0.2s ease;
+}
+
+.create-flow__switch--on .create-flow__switch-knob {
+  transform: translateX(21px);
+}
+
+.create-flow__summary {
+  display: grid;
+  gap: 8px;
+}
+
+.create-flow__actions {
+  display: grid;
+  gap: 8px;
 }
 
 .field {
@@ -842,6 +970,23 @@ input[type="range"] {
   font-weight: 700;
 }
 
+.game-opponent__badge {
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.game-opponent__badge--shuler {
+  color: #ffd9dc;
+  border: 1px solid rgba(233, 86, 96, 0.9);
+  background: rgba(112, 20, 30, 0.72);
+}
+
 .hand-zone__header {
   margin-bottom: var(--space-8);
 }
@@ -1012,6 +1157,47 @@ input[type="range"] {
   text-align: center;
   font-size: var(--font-size-body);
   color: var(--color-text-hint);
+}
+
+.game-chat {
+  gap: 10px;
+}
+
+.game-chat__quick {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.game-chat__quick .pill {
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.game-chat__feed {
+  display: grid;
+  gap: 6px;
+}
+
+.game-chat__item {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  border: 1px solid rgba(128, 138, 255, 0.24);
+  background: rgba(24, 35, 97, 0.58);
+  border-radius: var(--radius-input);
+  padding: 8px 10px;
+}
+
+.game-chat__composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.game-chat__composer .button {
+  width: auto;
+  min-width: 104px;
 }
 
 .playing-card--selected {

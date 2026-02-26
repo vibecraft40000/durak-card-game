@@ -1,22 +1,39 @@
-# Админ-панель (Flask)
+﻿# Админ-панель (Flask)
 
-Веб-админка для Дурак Онлайн: авторизация, дашборд со статистикой, список пользователей из API бэкенда.
+Панель для управления Telegram Mini App «Дурак Онлайн».
 
-## Стек
+## Что умеет
 
-- **Flask** — веб-приложение
-- **Flask-Login** — аутентификация
-- **Flask-SQLAlchemy** — модель админа (SQLite)
-- **REST API** — интеграция с Go бэкендом (`/admin/stats`, `/admin/users`)
+- Авторизация администратора (Flask-Login).
+- Дашборд (проверка подключения к backend API, счетчик пользователей).
+- Список пользователей с действиями:
+  - `ban / unban`
+  - ручная корректировка баланса (`balance-adjust`).
+- Расширенные логи:
+  - операции из `transactions`
+  - admin audit события
+  - результаты матчей
+  - последние выводы.
+
+## Требования
+
+- Python 3.11+
+- Доступ к Go backend с включенным `ADMIN_SECRET`
 
 ## Установка
 
 ```bash
 cd admin_panel
 pip install -r requirements.txt
-cp .env.example .env
-# Отредактируйте .env: FLASK_SECRET_KEY, ADMIN_PASSWORD, API_BASE_URL, ADMIN_SECRET
 ```
+
+## Конфигурация (`.env`)
+
+- `FLASK_SECRET_KEY` — секрет сессий Flask.
+- `ADMIN_USERNAME` — логин администратора.
+- `ADMIN_PASSWORD` — пароль администратора (первичный админ создается при первом запуске).
+- `API_BASE_URL` — адрес backend API.
+- `ADMIN_SECRET` — тот же секрет, что и в backend (`X-Admin-Secret`).
 
 ## Запуск
 
@@ -24,24 +41,14 @@ cp .env.example .env
 python run.py
 ```
 
-Откройте в браузере: http://localhost:5000  
-Логин и пароль — из `ADMIN_USERNAME` и `ADMIN_PASSWORD` (первый админ создаётся при первом запуске).
+По умолчанию: `http://localhost:5000`.
 
-## Переменные окружения
+## Используемые backend endpoints
 
-| Переменная | Описание |
-|------------|----------|
-| `FLASK_SECRET_KEY` | Секрет для сессий (обязательно сменить в проде) |
-| `ADMIN_USERNAME` | Логин первого админа (по умолчанию `admin`) |
-| `ADMIN_PASSWORD` | Пароль первого админа (при первом запуске создаётся учётка) |
-| `API_BASE_URL` | URL Go бэкенда (например `https://durakonline.duckdns.org`) |
-| `ADMIN_SECRET` | Секрет для запросов к `/admin/stats` и `/admin/users` (тот же, что в backend) |
-
-В бэкенде (Go) должны быть заданы `ADMIN_SECRET` и включены маршруты `/admin/stats` и `/admin/users`.
-
-## Функции
-
-- **Вход** — логин/пароль, декоратор `@admin_required` на всех страницах админки.
-- **Дашборд** — число пользователей в БД (из API), статус подключения к API.
-- **Пользователи** — таблица с пагинацией (данные из GET `/admin/users`).
-- **Настройки** — отображение конфигурации (API_BASE_URL, наличие ADMIN_SECRET).
+- `GET /admin/stats`
+- `GET /admin/users`
+- `POST /admin/users/{id}/ban`
+- `POST /admin/users/{id}/unban`
+- `POST /admin/users/{id}/balance-adjust`
+- `GET /admin/logs`
+- `GET /admin/withdrawals`

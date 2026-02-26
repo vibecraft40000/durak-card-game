@@ -45,9 +45,12 @@ func RunDisconnectTimeouts(ctx context.Context, gamesService *games.Service, roo
 				}
 				_, _ = roomsService.MarkRoomFinished(ctx, roomID)
 				payload := map[string]any{
-					"roomId":         roomID,
-					"winnerPlayerId": r.State.WinnerPlayer,
-					"abandoned":      true,
+					"roomId":          roomID,
+					"winnerPlayerId":  r.State.WinnerPlayer,
+					"winnerPlayerIds": r.State.WinnerPlayers,
+					"isDraw":          r.State.IsDraw,
+					"finishGroups":    r.State.FinishGroups,
+					"abandoned":       true,
 				}
 				if payoutInfo != nil {
 					payload["settlementId"] = payoutInfo.SettlementID

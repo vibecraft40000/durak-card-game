@@ -22,7 +22,7 @@ export function HomePage() {
         <Link className="button button--primary" to="/lobby">
           Перейти в лобби
         </Link>
-        <Link className="button" to="/create">
+        <Link className="button" to="/play/create">
           Создать игру
         </Link>
       </div>

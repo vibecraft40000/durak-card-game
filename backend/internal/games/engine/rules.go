@@ -2,24 +2,29 @@ package engine
 
 import (
 	"errors"
+	"slices"
 	"time"
 )
 
 var (
-	ErrInvalidTurn      = errors.New("invalid turn")
-	ErrCardMissing      = errors.New("card not in hand")
-	ErrInvalidMove      = errors.New("invalid move")
-	ErrCardDoesNotBeat  = errors.New("defense card does not beat attack card")
-	ErrAttackCardDenied = errors.New("attack card rank not allowed")
+	ErrInvalidTurn        = errors.New("invalid turn")
+	ErrCardMissing        = errors.New("card not in hand")
+	ErrInvalidMove        = errors.New("invalid move")
+	ErrCardDoesNotBeat    = errors.New("defense card does not beat attack card")
+	ErrAttackCardDenied   = errors.New("attack card rank not allowed")
+	ErrTranslateDenied    = errors.New("translate move is not allowed")
+	ErrCannotReportShuler = errors.New("cannot report shuler now")
 )
 
 type Action string
 
 const (
-	ActionAttack Action = "attack"
-	ActionDefend Action = "defend"
-	ActionTake   Action = "take"
-	ActionPass   Action = "pass"
+	ActionAttack      Action = "attack"
+	ActionDefend      Action = "defend"
+	ActionTake        Action = "take"
+	ActionPass        Action = "pass"
+	ActionTranslate   Action = "translate"
+	ActionShulerReport Action = "shuler_report"
 )
 
 func ApplyAction(state *GameState, playerID string, action Action, cardID string, turnTTL time.Duration) error {
@@ -29,11 +34,17 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 	if state.Metadata == nil {
 		state.Metadata = map[string]interface{}{}
 	}
-	if state.TurnPlayerID != playerID {
+	if action != ActionShulerReport && state.TurnPlayerID != playerID {
 		return ErrInvalidTurn
 	}
 
 	switch action {
+	case ActionShulerReport:
+		if !state.ShulerEnabled || state.ShulerDetected || state.ShulerPlayerID == "" || playerID == state.ShulerPlayerID {
+			return ErrCannotReportShuler
+		}
+		state.ShulerDetected = true
+		state.Metadata["shuler_reported_by"] = playerID
 	case ActionAttack:
 		if state.TurnState != TurnAttack || state.AttackerID != playerID {
 			return ErrInvalidTurn
@@ -63,67 +74,223 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 			return ErrCardMissing
 		}
 		attackCard := state.TableCards[len(state.TableCards)-1]
-		if !beats(attackCard, card, state.Trump) {
+		if !beatsForState(state, attackCard, card, playerID) {
 			return ErrCardDoesNotBeat
 		}
 		state.Hands[playerID] = hand
 		state.TableCards = append(state.TableCards, card)
 		state.TurnState = TurnAttack
 		state.TurnPlayerID = state.AttackerID
+	case ActionTranslate:
+		if state.Mode != "perevodnoy" || state.TurnState != TurnDefend || state.DefenderID != playerID || len(state.TableCards)%2 == 0 || len(state.TableCards) == 0 {
+			return ErrTranslateDenied
+		}
+		hand := state.Hands[playerID]
+		card, ok := popCard(&hand, cardID)
+		if !ok {
+			return ErrCardMissing
+		}
+		lastAttack := state.TableCards[len(state.TableCards)-1]
+		if card.Rank != lastAttack.Rank {
+			return ErrTranslateDenied
+		}
+		nextDefender := nextActivePlayer(state, state.DefenderID, state.AttackerID, state.DefenderID)
+		if nextDefender == "" {
+			return ErrTranslateDenied
+		}
+		state.Hands[playerID] = hand
+		state.TableCards = append(state.TableCards, card)
+		state.DefenderID = nextDefender
+		state.TurnState = TurnDefend
+		state.TurnPlayerID = nextDefender
+		state.Metadata["round_limit"] = len(state.Hands[nextDefender])
 	case ActionTake:
 		if state.TurnState != TurnDefend || state.DefenderID != playerID {
 			return ErrInvalidTurn
 		}
 		state.Hands[playerID] = append(state.Hands[playerID], state.TableCards...)
 		state.TableCards = nil
-		swapRoles(state)
 		refillHands(state)
-		state.TurnState = TurnAttack
-		state.TurnPlayerID = state.AttackerID
-		state.Metadata["round_limit"] = len(state.Hands[state.DefenderID])
+		rotateAfterTake(state)
+		prepareNextRound(state)
 	case ActionPass:
 		if state.TurnState != TurnAttack || state.AttackerID != playerID || len(state.TableCards) == 0 || len(state.TableCards)%2 != 0 {
 			return ErrInvalidTurn
 		}
 		state.TableCards = nil
 		refillHands(state)
-		swapRoles(state)
-		state.TurnState = TurnAttack
-		state.TurnPlayerID = state.AttackerID
-		state.Metadata["round_limit"] = len(state.Hands[state.DefenderID])
+		rotateAfterSuccessfulDefense(state)
+		prepareNextRound(state)
 	default:
 		return ErrInvalidTurn
 	}
 
 	maybeFinish(state)
 	state.Version++
-	state.TurnEndsAt = time.Now().Add(turnTTL).UTC()
+	if state.Status == StatusPlaying {
+		state.TurnEndsAt = time.Now().Add(turnTTL).UTC()
+	}
 	state.LastActionAt = time.Now().UTC()
 	return nil
 }
 
-func swapRoles(state *GameState) {
-	state.AttackerID, state.DefenderID = state.DefenderID, state.AttackerID
+func rotateAfterSuccessfulDefense(state *GameState) {
+	nextAttacker := state.DefenderID
+	if isEliminated(state, nextAttacker) {
+		nextAttacker = nextActivePlayer(state, nextAttacker)
+	}
+	nextDefender := nextActivePlayer(state, nextAttacker, nextAttacker)
+	if nextAttacker == "" || nextDefender == "" {
+		return
+	}
+	state.AttackerID = nextAttacker
+	state.DefenderID = nextDefender
+}
+
+func rotateAfterTake(state *GameState) {
+	nextAttacker := state.AttackerID
+	if isEliminated(state, nextAttacker) {
+		nextAttacker = nextActivePlayer(state, nextAttacker)
+	}
+	nextDefender := nextActivePlayer(state, state.DefenderID, nextAttacker)
+	if nextDefender == "" {
+		nextDefender = nextActivePlayer(state, nextAttacker, nextAttacker)
+	}
+	if nextAttacker == "" || nextDefender == "" {
+		return
+	}
+	state.AttackerID = nextAttacker
+	state.DefenderID = nextDefender
 }
 
 func refillHands(state *GameState) {
-	dealCardsInOrder(state.PlayerOrder, state.Hands, &state.Deck, 6)
+	dealCardsInOrderFrom(state.AttackerID, state.PlayerOrder, state.Hands, &state.Deck, 6)
+}
+
+func prepareNextRound(state *GameState) {
+	state.TurnState = TurnAttack
+	state.TurnPlayerID = state.AttackerID
+	state.Metadata["round_limit"] = len(state.Hands[state.DefenderID])
 }
 
 func maybeFinish(state *GameState) {
-	for playerID, hand := range state.Hands {
-		if len(hand) == 0 && len(state.Deck) == 0 {
-			state.Status = StatusFinished
-			state.WinnerPlayer = playerID
-			return
+	finishedSet := make(map[string]struct{})
+	for _, group := range state.FinishGroups {
+		for _, playerID := range group {
+			finishedSet[playerID] = struct{}{}
 		}
 	}
+
+	newlyFinished := make([]string, 0)
+	for _, playerID := range state.PlayerOrder {
+		if _, already := finishedSet[playerID]; already {
+			continue
+		}
+		if isEliminated(state, playerID) {
+			newlyFinished = append(newlyFinished, playerID)
+		}
+	}
+	if len(newlyFinished) > 0 {
+		state.FinishGroups = append(state.FinishGroups, newlyFinished)
+		for _, playerID := range newlyFinished {
+			finishedSet[playerID] = struct{}{}
+		}
+	}
+
+	active := activePlayers(state)
+	totalPlayers := len(state.PlayerOrder)
+	finishedCount := 0
+	for _, group := range state.FinishGroups {
+		finishedCount += len(group)
+	}
+
+	if finishedCount == totalPlayers {
+		finalizeMatchResult(state)
+		return
+	}
+
+	// The only non-finished player becomes the last place.
+	if len(active) == 1 && finishedCount == totalPlayers-1 {
+		last := active[0]
+		if _, exists := finishedSet[last]; !exists {
+			state.FinishGroups = append(state.FinishGroups, []string{last})
+		}
+		finalizeMatchResult(state)
+	}
+}
+
+func finalizeMatchResult(state *GameState) {
+	if len(state.FinishGroups) == 0 || len(state.FinishGroups[0]) == 0 {
+		return
+	}
+	state.Status = StatusFinished
+	state.WinnerPlayer = state.FinishGroups[0][0]
+	state.WinnerPlayers = slices.Clone(state.FinishGroups[0])
+	state.IsDraw = len(state.WinnerPlayers) > 1
+}
+
+func activePlayers(state *GameState) []string {
+	out := make([]string, 0, len(state.PlayerOrder))
+	for _, playerID := range state.PlayerOrder {
+		if !isEliminated(state, playerID) {
+			out = append(out, playerID)
+		}
+	}
+	return out
+}
+
+func isEliminated(state *GameState, playerID string) bool {
+	return len(state.Hands[playerID]) == 0 && len(state.Deck) == 0
+}
+
+func nextActivePlayer(state *GameState, current string, excluded ...string) string {
+	if len(state.PlayerOrder) == 0 {
+		return ""
+	}
+	excludedSet := make(map[string]struct{}, len(excluded))
+	for _, playerID := range excluded {
+		excludedSet[playerID] = struct{}{}
+	}
+
+	startIndex := -1
+	for i, playerID := range state.PlayerOrder {
+		if playerID == current {
+			startIndex = i
+			break
+		}
+	}
+	if startIndex < 0 {
+		startIndex = 0
+	}
+	for step := 1; step <= len(state.PlayerOrder); step++ {
+		candidate := state.PlayerOrder[(startIndex+step)%len(state.PlayerOrder)]
+		if candidate == "" {
+			continue
+		}
+		if _, blocked := excludedSet[candidate]; blocked {
+			continue
+		}
+		if isEliminated(state, candidate) {
+			continue
+		}
+		return candidate
+	}
+	return ""
 }
 
 // ForceFinishWithWinner ends the match with the given winner (e.g. when opponent abandons).
 func ForceFinishWithWinner(state *GameState, winnerID string) {
 	state.Status = StatusFinished
 	state.WinnerPlayer = winnerID
+	state.WinnerPlayers = []string{winnerID}
+	state.IsDraw = false
+	state.FinishGroups = [][]string{{winnerID}}
+	for _, playerID := range state.PlayerOrder {
+		if playerID == winnerID {
+			continue
+		}
+		state.FinishGroups = append(state.FinishGroups, []string{playerID})
+	}
 	state.Version++
 }
 
@@ -153,7 +320,10 @@ func roundLimit(state *GameState) int {
 			}
 		}
 	}
-	return len(state.Hands[state.DefenderID])
+	if v := len(state.Hands[state.DefenderID]); v > 0 {
+		return v
+	}
+	return 1
 }
 
 func canAttackCard(state *GameState, cardID string) bool {
@@ -179,6 +349,13 @@ func canAttackCard(state *GameState, cardID string) bool {
 	return false
 }
 
+func beatsForState(state *GameState, attack Card, defend Card, defenderID string) bool {
+	if state.ShulerEnabled && !state.ShulerDetected && state.ShulerPlayerID != "" && defenderID == state.ShulerPlayerID {
+		return true
+	}
+	return beats(attack, defend, state.Trump)
+}
+
 func beats(attack Card, defend Card, trump Suit) bool {
 	if defend.Suit == attack.Suit {
 		return rankWeight(defend.Rank) > rankWeight(attack.Rank)
@@ -188,24 +365,32 @@ func beats(attack Card, defend Card, trump Suit) bool {
 
 func rankWeight(rank string) int {
 	switch rank {
-	case "6":
+	case "2":
 		return 0
-	case "7":
+	case "3":
 		return 1
-	case "8":
+	case "4":
 		return 2
-	case "9":
+	case "5":
 		return 3
-	case "10":
+	case "6":
 		return 4
-	case "J":
+	case "7":
 		return 5
-	case "Q":
+	case "8":
 		return 6
-	case "K":
+	case "9":
 		return 7
-	case "A":
+	case "10":
 		return 8
+	case "J":
+		return 9
+	case "Q":
+		return 10
+	case "K":
+		return 11
+	case "A":
+		return 12
 	default:
 		return -1
 	}

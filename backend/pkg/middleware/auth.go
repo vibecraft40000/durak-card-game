@@ -38,6 +38,11 @@ func AuthJWT(authService *auth.Service, userRepo *users.Repository) func(http.Ha
 				http.Error(w, "user not found", http.StatusUnauthorized)
 				return
 			}
+			if user.IsBanned {
+				log.Printf("[auth] 403 path=%s reason=user_banned user_id=%s", r.URL.Path, userID)
+				http.Error(w, "user is banned", http.StatusForbidden)
+				return
+			}
 
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))

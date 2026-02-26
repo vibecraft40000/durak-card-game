@@ -9,7 +9,7 @@ export type Room = {
   playerIds: string[];
   maxPlayers: number;
   deck: DeckSize;
-  mode: GameMode;
+  mode: string;
   status?: "waiting" | "starting" | "active" | "in_game" | "finished" | "cancelled";
   matchId?: string;
   readyPlayers?: number;
@@ -18,13 +18,19 @@ export type Room = {
 
 export type CreateRoomInput = {
   stakeUsd: number;
-  mode: GameMode;
+  mode: string;
   deck: DeckSize;
   maxPlayers: number;
   title?: string;
 };
 
-export type MatchActionType = "attack" | "defend" | "take" | "pass";
+export type MatchActionType =
+  | "attack"
+  | "defend"
+  | "take"
+  | "pass"
+  | "translate"
+  | "shuler_report";
 
 export type MatchAction = {
   type: MatchActionType;

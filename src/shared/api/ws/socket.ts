@@ -166,14 +166,17 @@ export const wsClient = new WsClient();
 function mapIntentToWireAction(type: IntentType):
   | "attack_card"
   | "defend_card"
+  | "translate"
   | "take_cards"
   | "pass_turn"
+  | "shuler_report"
   | null {
   switch (type) {
     case "playAttack":
     case "throwIn":
-    case "translate":
       return "attack_card";
+    case "translate":
+      return "translate";
     case "playDefend":
       return "defend_card";
     case "take":
@@ -181,8 +184,9 @@ function mapIntentToWireAction(type: IntentType):
     case "pass":
     case "endTurn":
     case "confirmStake":
-    case "shulerReport":
       return "pass_turn";
+    case "shulerReport":
+      return "shuler_report";
     default:
       return null;
   }

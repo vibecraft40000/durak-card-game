@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { applyMockMatchAction, isMockApiEnabled } from "@/mocks/mockApi";
 import type { MatchActionType, Room } from "@/entities/match/types";
+import type { IntentType } from "@/shared/api/ws/types";
 import type { Card } from "@/entities/card/types";
 import { joinGameRoom } from "@/processes/joinGame.process";
 import { getRoom, leaveRoom } from "@/shared/api/rooms";
@@ -35,6 +36,7 @@ import {
   selectIsDefender,
 } from "@/entities/game/model/selectors";
 import { useSwipeDown } from "@/shared/hooks/useSwipeDown";
+import { onWsEvent } from "@/shared/api/ws/events";
 import {
   addActivity,
   clearGameError,
@@ -43,6 +45,15 @@ import {
   setMatchState,
   subscribeGameStore,
 } from "@/store/game.store";
+
+type ChatReaction = {
+  id: string;
+  userId: string;
+  message: string;
+  createdAt: number;
+};
+
+const QUICK_CHAT_REACTIONS = ["Беру!", "Бито!", "Пас!", "Ход!"];
 
 export function GameTablePage() {
   const { id } = useParams<{ id: string }>();
@@ -56,6 +67,8 @@ export function GameTablePage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [profileBalance, setProfileBalance] = useState<number | null>(null);
   const [intentError, setIntentError] = useState<{ text: string; code?: string } | null>(null);
+  const [chatInput, setChatInput] = useState("");
+  const [chatReactions, setChatReactions] = useState<ChatReaction[]>([]);
   const currency = "USD";
   const tableZoneRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +106,37 @@ export function GameTablePage() {
     };
   }, [navigate]);
 
+  useEffect(() => {
+    const offChat = onWsEvent("chat_message", ({ payload }) => {
+      const message = payload?.message?.trim();
+      const userId = payload?.userId?.trim();
+      if (!message || !userId) {
+        return;
+      }
+      const reaction: ChatReaction = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        userId,
+        message,
+        createdAt: Date.now(),
+      };
+      setChatReactions((prev) => [...prev, reaction].slice(-16));
+    });
+
+    return () => {
+      offChat();
+    };
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      setChatReactions((prev) => prev.filter((item) => now - item.createdAt < 12000));
+    }, 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   const matchState = gameState.matchState;
   useEffect(() => {
     if (gameState.matchResult) {
@@ -123,6 +167,16 @@ export function GameTablePage() {
     () => players.filter((player: any) => player.id !== currentPlayer?.id),
     [currentPlayer?.id, players],
   );
+  const playerNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const player of players) {
+      if (!player?.id) {
+        continue;
+      }
+      map[player.id] = player.displayName ?? player.username ?? player.id;
+    }
+    return map;
+  }, [players]);
   const hasDetailedHand = Boolean(currentPlayer?.hand?.length);
   const isMyTurn = useMemo(
     () => selectIsMyTurn(gameState, currentUserId),
@@ -148,6 +202,17 @@ export function GameTablePage() {
     () => selectCanPass(gameState, currentUserId),
     [gameState, currentUserId],
   );
+  const shulerWindowOpen = Boolean(matchState?.shuler?.isWindowOpen);
+  const shulerPlayers = useMemo(
+    () => new Set(matchState?.shuler?.activePlayers ?? []),
+    [matchState?.shuler?.activePlayers],
+  );
+  const canReportShuler = Boolean(currentUserId) && shulerWindowOpen && !shulerPlayers.has(currentUserId ?? "");
+  const isTranslateMode = useMemo(() => {
+    const raw = (matchState?.mode ?? room?.mode ?? "").toLowerCase();
+    return raw.includes("perevod") || raw.includes("перевод");
+  }, [matchState?.mode, room?.mode]);
+  const canTranslate = canDefend && isTranslateMode;
   const tablePairs = useMemo(() => {
     if (!matchState) return [];
     if (matchState.tablePiles && matchState.tablePiles.length > 0) {
@@ -275,35 +340,63 @@ export function GameTablePage() {
     }
     const cardId = cardIdOverride ?? selectedCardId ?? undefined;
     if (isMockApiEnabled()) {
-      const next = applyMockMatchAction({ roomId: id, action, cardId });
+      const mockAction =
+        action === "translate"
+          ? "defend"
+          : action === "shuler_report"
+            ? "pass"
+            : action;
+      const next = applyMockMatchAction({ roomId: id, action: mockAction, cardId });
       setMatchState(next);
       addActivity(`Mock action: ${action}`);
-      if (action === "attack" || action === "defend") {
+      if (action === "attack" || action === "defend" || action === "translate") {
         setSelectedCardId(null);
       }
       return;
     }
+
+    const intentByAction: Record<MatchActionType, IntentType> = {
+      attack: "playAttack",
+      defend: "playDefend",
+      take: "take",
+      pass: "pass",
+      translate: "translate",
+      shuler_report: "shulerReport",
+    };
+    const intent = intentByAction[action];
+    if (!intent) {
+      return;
+    }
+
     const intentPayload: Record<string, unknown> = { roomId: id };
-    if (cardId && (action === "attack" || action === "defend")) {
+    if (cardId && (action === "attack" || action === "defend" || action === "translate")) {
       intentPayload.cardId = cardId;
     }
 
     hapticImpact("medium");
-    wsClient.sendIntent(
-      action === "attack"
-        ? "playAttack"
-        : action === "defend"
-          ? "playDefend"
-          : action === "take"
-            ? "take"
-            : action === "pass"
-              ? "pass"
-              : "pass",
-      intentPayload,
-    );
-    if (action === "attack" || action === "defend") {
+    wsClient.sendIntent(intent, intentPayload);
+    if (action === "attack" || action === "defend" || action === "translate") {
       setSelectedCardId(null);
     }
+  }
+
+  function sendChatMessage(rawMessage: string) {
+    if (!id) {
+      return;
+    }
+    const message = rawMessage.trim();
+    if (!message) {
+      return;
+    }
+    wsClient.send({
+      type: "send_message",
+      payload: {
+        roomId: id,
+        message,
+      },
+    });
+    setChatInput("");
+    hapticSelection();
   }
 
   return (
@@ -391,7 +484,9 @@ export function GameTablePage() {
             <div className="game-board__top">
               <div className="game-board__room">
                 <strong>{room.title}</strong>
-                <span>${room.stakeUsd}</span>
+                <span>
+                  ${room.stakeUsd} · {room.mode} · {currency}
+                </span>
               </div>
               <div className="game-board__meta">
                 <div className="game-board__trump">
@@ -416,6 +511,9 @@ export function GameTablePage() {
                       <div className="game-opponent__name">
                         {seat.name ?? `Игрок ${index + 1}`}
                       </div>
+                      {shulerPlayers.has(seat.id) && (
+                        <div className="game-opponent__badge game-opponent__badge--shuler">Шулер</div>
+                      )}
                       <div className="game-opponent__cards" title="Карт на руке">
                         {seat.cardCount}
                       </div>
@@ -434,6 +532,9 @@ export function GameTablePage() {
                       <div className="game-opponent__name">
                         {player.displayName ?? player.username ?? `Игрок ${index + 1}`}
                       </div>
+                      {shulerPlayers.has(player.id) && (
+                        <div className="game-opponent__badge game-opponent__badge--shuler">Шулер</div>
+                      )}
                       <div className="game-opponent__cards" title="Карт на руке">
                         {player.handCount}
                       </div>
@@ -508,6 +609,9 @@ export function GameTablePage() {
                   {isDefenderRole && !isAttackerRole && (
                     <span className="game-opponent__role">Защищаетесь</span>
                   )}
+                  {currentUserId && shulerPlayers.has(currentUserId) && (
+                    <span className="game-opponent__badge game-opponent__badge--shuler">Шулер</span>
+                  )}
                 </div>
                 <div className="game-opponent__cards">
                   {meSeat?.cardCount ?? currentPlayer?.handCount ?? 0}
@@ -557,6 +661,20 @@ export function GameTablePage() {
 
           <AppCard className="game-actions">
             <div className="action-list action-list--inline">
+              <AppButton
+                type="button"
+                onClick={() => sendAction("attack")}
+                disabled={!canAttack || interactionLocked || (hasDetailedHand && !selectedCardId)}
+              >
+                Ход
+              </AppButton>
+              <AppButton
+                type="button"
+                onClick={() => sendAction("defend")}
+                disabled={!canDefend || interactionLocked || (hasDetailedHand && !selectedCardId)}
+              >
+                Защита
+              </AppButton>
               <div
                 className="action-take-wrap"
                 {...(canTake && !interactionLocked ? swipeTake : {})}
@@ -570,25 +688,33 @@ export function GameTablePage() {
                   Беру
                 </AppButton>
               </div>
-              <AppButton
-                type="button"
-                onClick={() => sendAction("defend")}
-                disabled={!canDefend || interactionLocked || (hasDetailedHand && !selectedCardId)}
-              >
-                Бью
-              </AppButton>
-              <AppButton
-                type="button"
-                onClick={() => sendAction("attack")}
-                disabled={!canAttack || interactionLocked || (hasDetailedHand && !selectedCardId)}
-              >
-                Подкинуть
-              </AppButton>
             </div>
             <div className="game-actions__secondary">
-              <AppButton type="button" onClick={() => sendAction("pass")} disabled={!canPass || interactionLocked}>
-                Пас
+              <AppButton
+                type="button"
+                onClick={() => sendAction("pass")}
+                disabled={!canPass || interactionLocked}
+              >
+                Бито
               </AppButton>
+              {isTranslateMode && (
+                <AppButton
+                  type="button"
+                  onClick={() => sendAction("translate")}
+                  disabled={!canTranslate || interactionLocked || (hasDetailedHand && !selectedCardId)}
+                >
+                  Перевести
+                </AppButton>
+              )}
+              {canReportShuler && (
+                <AppButton
+                  type="button"
+                  onClick={() => sendAction("shuler_report")}
+                  disabled={interactionLocked}
+                >
+                  Сообщить о шулере
+                </AppButton>
+              )}
               <Link className="button" to={`/game/${id}/friends`}>
                 Друзья
               </Link>
@@ -607,6 +733,50 @@ export function GameTablePage() {
                   ? `${bal.toFixed(3)} ${currency}`
                   : `— ${currency}`;
               })()}
+            </div>
+          </AppCard>
+
+          <AppCard className="game-chat">
+            <div className="card__label">Чат и реакции</div>
+            <div className="game-chat__quick">
+              {QUICK_CHAT_REACTIONS.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="pill"
+                  onClick={() => sendChatMessage(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+            <div className="game-chat__feed">
+              {chatReactions.length > 0 ? (
+                chatReactions.slice(-4).map((item) => (
+                  <div key={item.id} className="game-chat__item">
+                    <strong>{playerNameById[item.userId] ?? "Игрок"}:</strong> {item.message}
+                  </div>
+                ))
+              ) : (
+                <div className="card__hint">Сообщений пока нет</div>
+              )}
+            </div>
+            <div className="game-chat__composer">
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                maxLength={120}
+                placeholder="Введите сообщение..."
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    sendChatMessage(chatInput);
+                  }
+                }}
+              />
+              <AppButton type="button" onClick={() => sendChatMessage(chatInput)}>
+                Отправить
+              </AppButton>
             </div>
           </AppCard>
 

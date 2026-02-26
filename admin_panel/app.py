@@ -45,12 +45,14 @@ def create_app() -> Flask:
 
     from routes.auth import auth_bp
     from routes.dashboard import dashboard_bp
+    from routes.logs import logs_bp
     from routes.users import users_bp
     from routes.settings import settings_bp
 
     app.register_blueprint(auth_bp, url_prefix="/")
     app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
     app.register_blueprint(users_bp, url_prefix="/users")
+    app.register_blueprint(logs_bp, url_prefix="/logs")
     app.register_blueprint(settings_bp, url_prefix="/settings")
 
     @app.route("/")

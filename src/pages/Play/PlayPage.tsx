@@ -144,6 +144,17 @@ function parseFiltersFromStorage(): FilterState | null {
   }
 }
 
+function roomMatchesMode(roomMode: string, modeFilter: FilterState["mode"]) {
+  if (modeFilter === "all") {
+    return true;
+  }
+  const raw = roomMode.toLowerCase();
+  if (modeFilter === "Подкидной") {
+    return raw.includes("подкид") || raw.includes("podkid");
+  }
+  return raw.includes("перевод") || raw.includes("perevod");
+}
+
 export function PlayPage() {
   const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -231,7 +242,7 @@ export function PlayPage() {
 
   const filteredRooms = useMemo(() => {
     return rooms.filter((room) => {
-      const byMode = filters.mode === "all" ? true : room.mode === filters.mode;
+      const byMode = roomMatchesMode(room.mode, filters.mode);
       const byStake = room.stakeUsd <= filters.maxStake;
       const byDeck = filters.deck === "all" ? true : room.deck === filters.deck;
       const byPlayers = filters.maxPlayers === "all" ? true : room.maxPlayers === filters.maxPlayers;
@@ -249,7 +260,7 @@ export function PlayPage() {
       navigate(`/room/${quickRoom.id}`);
       return;
     }
-    navigate("/create");
+    navigate("/play/create");
   }
 
   function handleConnectById() {
@@ -467,7 +478,7 @@ export function PlayPage() {
           <p className="screen__subtitle">Выберите комнату или создайте свой стол.</p>
 
           <AppCard className="play-main-actions">
-            <Link className="button button--primary" to="/create">
+            <Link className="button button--primary" to="/play/create">
               Создать игру
             </Link>
             <button type="button" className="button" onClick={handleQuickGame}>

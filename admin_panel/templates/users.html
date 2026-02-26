@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 {% block title %}Пользователи — Админка{% endblock %}
 {% block content %}
 <h1>Пользователи</h1>
@@ -7,6 +7,10 @@
 {% else %}
 <div class="card">
   <p>Всего: <strong>{{ total }}</strong></p>
+  <div class="hint">Доступны действия: ban/unban и ручная корректировка баланса.</div>
+</div>
+
+<div class="card">
   <table>
     <thead>
       <tr>
@@ -15,7 +19,8 @@
         <th>Username</th>
         <th>Имя</th>
         <th>Язык</th>
-        <th>Регистрация</th>
+        <th>Ban</th>
+        <th>Действия</th>
       </tr>
     </thead>
     <tbody>
@@ -26,11 +31,39 @@
         <td>@{{ u.username or '—' }}</td>
         <td>{{ u.display_name or u.first_name or (u.username or '—') }}</td>
         <td>{{ u.language or 'ru' }}</td>
-        <td>{{ (u.created_at or '')[:10] or '—' }}</td>
+        <td>
+          {% if u.is_banned %}
+          <span style="color: var(--danger); font-weight: 700;">BANNED</span>
+          {% else %}
+          <span style="color: var(--success); font-weight: 700;">ACTIVE</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="table-actions">
+            <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <input type="hidden" name="action" value="{% if u.is_banned %}unban{% else %}ban{% endif %}">
+              {% if u.is_banned %}
+              <button type="submit" class="btn btn-success">Разбан</button>
+              {% else %}
+              <button type="submit" class="btn btn-danger">Бан</button>
+              {% endif %}
+            </form>
+
+            <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+              <input type="hidden" name="user_id" value="{{ u.id }}">
+              <input type="hidden" name="action" value="adjust_balance">
+              <input class="input-sm" type="number" step="0.01" name="amount" placeholder="amount" required>
+              <input class="input-sm" type="text" name="reason" placeholder="reason" value="manual adjust">
+              <button type="submit" class="btn btn-muted">Скорректировать</button>
+            </form>
+          </div>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+
   {% if pages > 1 %}
   <div class="pagination">
     {% if page > 1 %}

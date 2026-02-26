@@ -110,7 +110,15 @@ export type ClientWsEvent =
       type: "make_move";
       payload: {
         roomId: string;
-        action: MatchActionType | "attack_card" | "defend_card" | "take_cards" | "pass_turn" | "end_round";
+        action:
+          | MatchActionType
+          | "attack_card"
+          | "defend_card"
+          | "translate"
+          | "take_cards"
+          | "pass_turn"
+          | "end_round"
+          | "shuler_report";
         cardId?: string;
         expectedVersion?: number;
         actionId?: string;
@@ -165,6 +173,9 @@ export type ServerWsEvent =
       payload: {
         roomId: string;
         winnerPlayerId?: string;
+        winnerPlayerIds?: string[];
+        isDraw?: boolean;
+        finishGroups?: string[][];
         abandoned?: boolean;
         settlementId?: string;
         payouts?: { userId: string; amount: number }[];

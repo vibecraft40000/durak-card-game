@@ -138,7 +138,14 @@ export async function joinGameRoom(roomId: string) {
       type: "make_move",
       payload: {
         roomId,
-        action: (action ?? "pass_turn") as "attack_card" | "defend_card" | "take_cards" | "pass_turn" | "end_round",
+        action: (action ?? "pass_turn") as
+          | "attack_card"
+          | "defend_card"
+          | "translate"
+          | "take_cards"
+          | "pass_turn"
+          | "end_round"
+          | "shuler_report",
         ...(cardId && { cardId }),
         ...expectedVersion,
         actionId,

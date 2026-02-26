@@ -22,6 +22,7 @@ type User struct {
 	Language     string    `json:"language"`
 	ReferralCode string    `json:"referral_code"`
 	InvitedBy    *string   `json:"invited_by,omitempty"`
+	IsBanned     bool      `json:"is_banned"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -114,7 +115,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at FROM users WHERE id=$1`
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users WHERE id=$1`
 	var user User
 	start := time.Now()
 	err := r.db.QueryRow(ctx, query, id).Scan(
@@ -129,6 +130,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
+		&user.IsBanned,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -246,7 +248,7 @@ func (r *Repository) ListPaginated(ctx context.Context, offset, limit int) ([]Us
 	if err != nil {
 		return nil, 0, err
 	}
-	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	rows, err := r.db.Query(ctx, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -255,11 +257,20 @@ func (r *Repository) ListPaginated(ctx context.Context, offset, limit int) ([]Us
 	var list []User
 	for rows.Next() {
 		var u User
-		err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.PhotoURL, &u.DisplayName, &u.Currency, &u.Language, &u.ReferralCode, &u.InvitedBy, &u.CreatedAt, &u.UpdatedAt)
+		err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.PhotoURL, &u.DisplayName, &u.Currency, &u.Language, &u.ReferralCode, &u.InvitedBy, &u.IsBanned, &u.CreatedAt, &u.UpdatedAt)
 		if err != nil {
 			return nil, 0, err
 		}
 		list = append(list, u)
 	}
 	return list, total, rows.Err()
+}
+
+func (r *Repository) SetBanned(ctx context.Context, id string, banned bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := r.db.Exec(ctx, `UPDATE users SET is_banned=$2, updated_at=NOW() WHERE id=$1`, id, banned)
+	metrics.ObserveDBQuery("set_user_banned", start)
+	return err
 }

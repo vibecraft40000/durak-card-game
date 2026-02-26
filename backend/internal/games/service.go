@@ -54,20 +54,30 @@ func NewService(db *pgxpool.Pool, redisClient *redis.Client, turnTTL, stateTTL t
 }
 
 func (s *Service) StartMatch(ctx context.Context, matchID string, stake float64, mode string, players []string) (engine.GameState, error) {
-	if mode == "" {
-		mode = "classic"
+	return s.StartMatchWithConfig(ctx, matchID, stake, engine.GameConfig{
+		DeckSize: 36,
+		Mode:     mode,
+	}, players)
+}
+
+func (s *Service) StartMatchWithConfig(ctx context.Context, matchID string, stake float64, cfg engine.GameConfig, players []string) (engine.GameState, error) {
+	if cfg.Mode == "" {
+		cfg.Mode = "podkidnoy"
+	}
+	if cfg.DeckSize == 0 {
+		cfg.DeckSize = 36
 	}
 	mu := s.matchMutex(matchID)
 	mu.Lock()
 	defer mu.Unlock()
 
-	state := engine.NewGameState(matchID, players, s.turnTTL)
+	state := engine.NewGameStateWithConfig(matchID, players, s.turnTTL, cfg)
 	if err := s.saveState(ctx, state); err != nil {
 		return engine.GameState{}, err
 	}
 	if s.db != nil {
 		start := time.Now()
-		_, _ = s.db.Exec(ctx, `INSERT INTO matches (id, status, stake, mode, created_at) VALUES ($1::uuid, 'active', $2, $3, NOW())`, matchID, stake, mode)
+		_, _ = s.db.Exec(ctx, `INSERT INTO matches (id, status, stake, mode, created_at) VALUES ($1::uuid, 'active', $2, $3, NOW())`, matchID, stake, state.Mode)
 		metrics.ObserveDBQuery("insert_match", start)
 	}
 	start := time.Now()

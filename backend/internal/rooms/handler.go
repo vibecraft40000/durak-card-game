@@ -52,10 +52,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.MaxPlayers == 0 {
 		req.MaxPlayers = 2
 	}
-	if req.MaxPlayers != 2 {
+	if req.MaxPlayers < 2 || req.MaxPlayers > 4 {
 		req.MaxPlayers = 2
 	}
 	if req.Deck == 0 {
+		req.Deck = 36
+	}
+	if req.Deck != 24 && req.Deck != 36 && req.Deck != 52 {
 		req.Deck = 36
 	}
 	if req.Mode == "" {

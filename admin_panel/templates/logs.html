@@ -1,0 +1,79 @@
+﻿{% extends "base.html" %}
+{% block title %}Логи — Админка{% endblock %}
+{% block content %}
+<h1>Операционные логи</h1>
+
+<div class="card">
+  <form class="inline-form" method="get" action="{{ url_for('logs.index') }}">
+    <label for="limit">Лимит</label>
+    <input id="limit" class="input-sm" type="number" name="limit" min="1" max="200" value="{{ limit }}">
+    <button type="submit" class="btn">Применить</button>
+  </form>
+</div>
+
+{% if error %}
+<div class="card">
+  <p class="error">{{ error }}</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0;">События</h2>
+  {% if logs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>Тип</th>
+        <th>User</th>
+        <th>Action</th>
+        <th>Amount</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in logs %}
+      <tr>
+        <td>{{ row.created_at }}</td>
+        <td>{{ row.kind }}</td>
+        <td>{{ row.display_name or row.username or row.user_id }}</td>
+        <td>{{ row.action }}</td>
+        <td>{{ row.amount }}</td>
+        <td>{{ row.details }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Логи пока отсутствуют.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Последние выводы</h2>
+  {% if withdrawals %}
+  <table>
+    <thead>
+      <tr>
+        <th>Время</th>
+        <th>User</th>
+        <th>Amount</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in withdrawals %}
+      <tr>
+        <td>{{ row.created_at }}</td>
+        <td>{{ row.display_name or row.username or row.user_id }}</td>
+        <td>{{ row.amount }}</td>
+        <td>{{ row.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Нет операций вывода.</p>
+  {% endif %}
+</div>
+{% endblock %}

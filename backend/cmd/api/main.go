@@ -212,6 +212,112 @@ func main() {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"withdrawals": list})
 		})
+		router.Post("/admin/users/{id}/ban", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			userID := chi.URLParam(r, "id")
+			if userID == "" {
+				http.Error(w, "user id required", http.StatusBadRequest)
+				return
+			}
+			if _, ok := userRepo.GetByID(r.Context(), userID); !ok {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			if err := userRepo.SetBanned(r.Context(), userID, true); err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "ban", userID, nil, "")
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user_id": userID, "is_banned": true})
+		})
+		router.Post("/admin/users/{id}/unban", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			userID := chi.URLParam(r, "id")
+			if userID == "" {
+				http.Error(w, "user id required", http.StatusBadRequest)
+				return
+			}
+			if _, ok := userRepo.GetByID(r.Context(), userID); !ok {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			if err := userRepo.SetBanned(r.Context(), userID, false); err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "unban", userID, nil, "")
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user_id": userID, "is_banned": false})
+		})
+		router.Post("/admin/users/{id}/balance-adjust", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			userID := chi.URLParam(r, "id")
+			if userID == "" {
+				http.Error(w, "user id required", http.StatusBadRequest)
+				return
+			}
+			if _, ok := userRepo.GetByID(r.Context(), userID); !ok {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			var req struct {
+				Amount float64 `json:"amount"`
+				Reason string  `json:"reason"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			if req.Amount == 0 {
+				http.Error(w, "amount must be non-zero", http.StatusBadRequest)
+				return
+			}
+			if req.Reason == "" {
+				req.Reason = "manual balance adjust"
+			}
+			if _, err := txRepo.Add(r.Context(), transactions.Transaction{
+				UserID: userID,
+				Type:   transactions.TypeAdminAdjust,
+				Amount: req.Amount,
+				Status: transactions.StatusConfirmed,
+			}); err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			amount := req.Amount
+			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "balance_adjust", userID, &amount, req.Reason)
+			balance, _ := txRepo.Balance(r.Context(), userID)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":      true,
+				"user_id": userID,
+				"amount":  req.Amount,
+				"balance": balance,
+			})
+		})
+		router.Get("/admin/logs", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if limit <= 0 {
+				limit = 100
+			}
+			logs, err := txRepo.ListOperationLogs(r.Context(), limit)
+			if err != nil {
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
+		})
 	}
 
 	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {

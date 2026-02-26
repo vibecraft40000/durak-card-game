@@ -310,7 +310,13 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 					return r
 				}()})
 			}
-			payload := map[string]any{"roomId": client.RoomID, "winnerPlayerId": state.WinnerPlayer}
+			payload := map[string]any{
+				"roomId":          client.RoomID,
+				"winnerPlayerId":  state.WinnerPlayer,
+				"winnerPlayerIds": state.WinnerPlayers,
+				"isDraw":          state.IsDraw,
+				"finishGroups":    state.FinishGroups,
+			}
 			if payoutInfo != nil {
 				payload["settlementId"] = payoutInfo.SettlementID
 				payload["payouts"] = payoutInfo.Payouts
@@ -368,8 +374,12 @@ func normalizeAction(raw string) engine.Action {
 		return engine.ActionAttack
 	case "defend_card":
 		return engine.ActionDefend
+	case "translate":
+		return engine.ActionTranslate
 	case "take_cards":
 		return engine.ActionTake
+	case "shuler_report":
+		return engine.ActionShulerReport
 	case "pass_turn", "end_round":
 		return engine.ActionPass
 	default:
@@ -428,7 +438,13 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 				payoutInfo, _ = h.games.SettleMatchIfFinished(ctx, h.wallet, nextState, room.Stake, h.commissionBps)
 			}
 			_, _ = h.rooms.MarkRoomFinished(ctx, roomID)
-			payload := map[string]any{"roomId": roomID, "winnerPlayerId": nextState.WinnerPlayer}
+			payload := map[string]any{
+				"roomId":          roomID,
+				"winnerPlayerId":  nextState.WinnerPlayer,
+				"winnerPlayerIds": nextState.WinnerPlayers,
+				"isDraw":          nextState.IsDraw,
+				"finishGroups":    nextState.FinishGroups,
+			}
 			if payoutInfo != nil {
 				payload["settlementId"] = payoutInfo.SettlementID
 				payload["payouts"] = payoutInfo.Payouts
@@ -503,7 +519,13 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 				return r
 			}()})
 		}
-		payload := map[string]any{"roomId": roomID, "winnerPlayerId": result.State.WinnerPlayer}
+		payload := map[string]any{
+			"roomId":          roomID,
+			"winnerPlayerId":  result.State.WinnerPlayer,
+			"winnerPlayerIds": result.State.WinnerPlayers,
+			"isDraw":          result.State.IsDraw,
+			"finishGroups":    result.State.FinishGroups,
+		}
 		if payoutInfo != nil {
 			payload["settlementId"] = payoutInfo.SettlementID
 			payload["payouts"] = payoutInfo.Payouts
@@ -611,8 +633,11 @@ func errorCodeFromEngine(err error) string {
 	case errors.Is(err, engine.ErrInvalidTurn):
 		return "INVALID_TURN"
 	case errors.Is(err, engine.ErrCardMissing), errors.Is(err, engine.ErrInvalidMove),
-		errors.Is(err, engine.ErrCardDoesNotBeat), errors.Is(err, engine.ErrAttackCardDenied):
+		errors.Is(err, engine.ErrCardDoesNotBeat), errors.Is(err, engine.ErrAttackCardDenied),
+		errors.Is(err, engine.ErrTranslateDenied):
 		return "INVALID_CARD"
+	case errors.Is(err, engine.ErrCannotReportShuler):
+		return "INVALID_ACTION"
 	default:
 		return ""
 	}
@@ -678,6 +703,8 @@ func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engin
 		MatchID:        state.MatchID,
 		Version:        state.Version,
 		Phase:          phase,
+		DeckType:       state.DeckType,
+		Mode:           state.Mode,
 		Players:        players,
 		TableCards:     state.TableCards,
 		TrumpSuit:      string(state.Trump),
@@ -686,5 +713,17 @@ func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engin
 		TurnEndsAt:     state.TurnEndsAt.UnixMilli(),
 		Status:         string(state.Status),
 		WinnerPlayerID: state.WinnerPlayer,
+		WinnerPlayerIDs: state.WinnerPlayers,
+		IsDraw:         state.IsDraw,
+		FinishGroups:   state.FinishGroups,
+		Shuler: map[string]any{
+			"isWindowOpen": state.ShulerEnabled && !state.ShulerDetected,
+			"activePlayers": func() []string {
+				if state.ShulerEnabled && !state.ShulerDetected && state.ShulerPlayerID != "" {
+					return []string{state.ShulerPlayerID}
+				}
+				return []string{}
+			}(),
+		},
 	}
 }

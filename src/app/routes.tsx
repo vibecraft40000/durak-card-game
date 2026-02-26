@@ -32,11 +32,13 @@ export function AppRoutes() {
         <Route path="/home" element={<HomePage />} />
         <Route path="/lobby" element={<LobbyPage />} />
         <Route path="/play" element={<PlayPage />} />
-        <Route path="/create" element={<CreateGamePage />} />
+        <Route path="/play/create" element={<CreateGamePage />} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/profile/deposit" element={<DepositPage />} />
         <Route path="/profile/withdraw" element={<WithdrawPage />} />
       </Route>
+
+      <Route path="/create" element={<Navigate to="/play/create" replace />} />
 
       <Route element={<GameLayout />}>
         <Route path="/room/:id" element={<GameRoomPage />} />
