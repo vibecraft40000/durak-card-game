@@ -162,6 +162,23 @@ func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"room": room, "ok": true})
 }
 
+func (h *Handler) ConfirmStake(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	roomID := chi.URLParam(r, "id")
+	room, err := h.service.ConfirmStake(r.Context(), roomID, user.ID)
+	if err != nil {
+		log.Printf("confirmStake failed room_id=%s user_id=%s err=%v", roomID, user.ID, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log.Printf("confirmStake ok room_id=%s user_id=%s confirmed=%d match_id=%s", roomID, user.ID, len(room.StakeConfirmedUsers), room.MatchID)
+	writeJSON(w, http.StatusOK, map[string]any{"room": room, "ok": true})
+}
+
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)

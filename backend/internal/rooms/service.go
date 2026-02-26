@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/games"
+	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
 
@@ -19,13 +19,18 @@ import (
 )
 
 var (
-	ErrRoomNotFound    = errors.New("room not found")
-	ErrRoomFull        = errors.New("room full")
-	ErrNeedOpponent    = errors.New("waiting for opponent")
-	ErrNotRoomCreator  = errors.New("only room creator can start the game")
-	ErrNotAllReady     = errors.New("wait for all players to confirm")
-	ErrStartInProgress = errors.New("match start already in progress")
+	ErrRoomNotFound         = errors.New("room not found")
+	ErrRoomFull             = errors.New("room full")
+	ErrNeedOpponent         = errors.New("waiting for opponent")
+	ErrNotRoomCreator       = errors.New("only room creator can start the game")
+	ErrNotAllReady          = errors.New("wait for all players to confirm")
+	ErrStartInProgress      = errors.New("match start already in progress")
+	ErrStakeConfirmRequired = errors.New("stake confirmation is required")
+	ErrStakeConfirmExpired  = errors.New("stake confirmation expired")
+	ErrNotRoomParticipant   = errors.New("only room participants can confirm stake")
 )
+
+const stakeConfirmTimeout = 2 * time.Minute
 
 type Service struct {
 	repo          *Repository
@@ -111,6 +116,9 @@ func (s *Service) Ready(ctx context.Context, roomID string, userID string) (Room
 		}
 		// Auto-start when all configured players joined and confirmed.
 		if willStart {
+			if s.requiresStakeConfirmation(room) {
+				return s.beginStakeConfirmationLocked(ctx, room)
+			}
 			return s.startMatchLocked(ctx, room)
 		}
 		if err := s.repo.Save(ctx, room); err != nil {
@@ -133,6 +141,26 @@ func (s *Service) StartGame(ctx context.Context, roomID string, userID string) (
 		if room.Players[0] != userID {
 			return Room{}, ErrNotRoomCreator
 		}
+		if room.Status == StatusAwaitingStakeConfirm {
+			if s.isStakeConfirmExpired(room) {
+				room.Status = StatusCancelled
+				room.MatchID = ""
+				room.StakeConfirmDeadline = 0
+				room.StakeConfirmedUsers = nil
+				_ = s.repo.ClearStakeConfirmedSet(ctx, room.ID)
+				if err := s.repo.Save(ctx, room); err != nil {
+					return Room{}, fmt.Errorf("save room: %w", err)
+				}
+				return room, ErrStakeConfirmExpired
+			}
+			if err := s.syncStakeConfirmedUsers(ctx, &room); err != nil {
+				return Room{}, err
+			}
+			if !s.allStakeConfirmed(room) {
+				return Room{}, ErrStakeConfirmRequired
+			}
+			return s.startMatchLocked(ctx, room)
+		}
 		requiredPlayers := room.MaxPlayers
 		if shouldAutofillWithBot(room) {
 			requiredPlayers = 2
@@ -142,6 +170,67 @@ func (s *Service) StartGame(ctx context.Context, roomID string, userID string) (
 		}
 		return s.startMatchLocked(ctx, room)
 	})
+}
+
+// ConfirmStake confirms player's stake participation before match start.
+func (s *Service) ConfirmStake(ctx context.Context, roomID string, userID string) (Room, error) {
+	return s.withRoomLock(ctx, roomID, func() (Room, error) {
+		room, ok := s.repo.Get(ctx, roomID)
+		if !ok {
+			return Room{}, ErrRoomNotFound
+		}
+		if room.Status != StatusAwaitingStakeConfirm {
+			return room, ErrStakeConfirmRequired
+		}
+		if s.isStakeConfirmExpired(room) {
+			room.Status = StatusCancelled
+			room.MatchID = ""
+			room.StakeConfirmDeadline = 0
+			room.StakeConfirmedUsers = nil
+			_ = s.repo.ClearStakeConfirmedSet(ctx, room.ID)
+			if err := s.repo.Save(ctx, room); err != nil {
+				return Room{}, fmt.Errorf("save room: %w", err)
+			}
+			return room, ErrStakeConfirmExpired
+		}
+		if !slices.Contains(room.Players, userID) || IsBotPlayer(userID) {
+			return room, ErrNotRoomParticipant
+		}
+		if err := s.repo.AddStakeConfirmedUser(ctx, room.ID, userID); err != nil {
+			return Room{}, err
+		}
+		if err := s.syncStakeConfirmedUsers(ctx, &room); err != nil {
+			return Room{}, err
+		}
+		if s.allStakeConfirmed(room) {
+			return s.startMatchLocked(ctx, room)
+		}
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
+		return room, nil
+	})
+}
+
+func (s *Service) beginStakeConfirmationLocked(ctx context.Context, room Room) (Room, error) {
+	if room.Status == StatusAwaitingStakeConfirm && !s.isStakeConfirmExpired(room) {
+		if err := s.syncStakeConfirmedUsers(ctx, &room); err != nil {
+			return Room{}, err
+		}
+		if err := s.repo.Save(ctx, room); err != nil {
+			return Room{}, fmt.Errorf("save room: %w", err)
+		}
+		return room, nil
+	}
+	room.Status = StatusAwaitingStakeConfirm
+	room.MatchID = ""
+	room.StakeConfirmDeadline = time.Now().UTC().Add(stakeConfirmTimeout).UnixMilli()
+	room.StakeConfirmedUsers = nil
+	_ = s.repo.ClearStakeConfirmedSet(ctx, room.ID)
+	if err := s.repo.Save(ctx, room); err != nil {
+		return Room{}, fmt.Errorf("save room: %w", err)
+	}
+	return room, nil
 }
 
 func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error) {
@@ -194,10 +283,13 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 	}
 	room.MatchID = matchID
 	room.Status = StatusInGame
+	room.StakeConfirmDeadline = 0
+	room.StakeConfirmedUsers = nil
 	if err := s.repo.Save(ctx, room); err != nil {
 		return Room{}, fmt.Errorf("save room: %w", err)
 	}
 	_ = s.repo.ClearReadySet(ctx, room.ID)
+	_ = s.repo.ClearStakeConfirmedSet(ctx, room.ID)
 	log.Printf("[start] match created room=%s match=%s", room.ID, matchID)
 	return room, nil
 }
@@ -239,13 +331,18 @@ func (s *Service) LeaveOnDisconnect(ctx context.Context, roomID, userID string) 
 		}
 		room.Players = slices.DeleteFunc(room.Players, func(id string) bool { return id == userID })
 		_ = s.repo.RemoveReadyUser(ctx, roomID, userID)
+		_ = s.repo.RemoveStakeConfirmedUser(ctx, roomID, userID)
 		room.ReadyUsers, _ = s.repo.GetReadyUsers(ctx, roomID)
+		room.StakeConfirmedUsers, _ = s.repo.GetStakeConfirmedUsers(ctx, roomID)
 
 		// Lifecycle rule: if a real player leaves, room cannot continue.
-		if room.Status == StatusInGame || room.Status == StatusConfirmed || room.Status == StatusWaiting {
+		if room.Status == StatusInGame || room.Status == StatusConfirmed || room.Status == StatusWaiting || room.Status == StatusAwaitingStakeConfirm {
 			if !shouldAutofillWithBot(room) && len(room.Players) < 2 {
 				room.Status = StatusCancelled
 				room.MatchID = ""
+				room.StakeConfirmDeadline = 0
+				room.StakeConfirmedUsers = nil
+				_ = s.repo.ClearStakeConfirmedSet(ctx, roomID)
 			}
 		}
 
@@ -300,6 +397,107 @@ func (s *Service) CancelStaleRooms(ctx context.Context, maxWait time.Duration) i
 		}
 	}
 	return cancelled
+}
+
+// CancelExpiredStakeConfirmations cancels rooms where stake confirmation deadline expired.
+func (s *Service) CancelExpiredStakeConfirmations(ctx context.Context) []Room {
+	roomList, err := s.repo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]Room, 0)
+	now := time.Now().UTC()
+	for _, room := range roomList {
+		if room.Status != StatusAwaitingStakeConfirm || room.StakeConfirmDeadline <= 0 {
+			continue
+		}
+		if now.UnixMilli() <= room.StakeConfirmDeadline {
+			continue
+		}
+		updated, lockErr := s.withRoomLock(ctx, room.ID, func() (Room, error) {
+			current, ok := s.repo.Get(ctx, room.ID)
+			if !ok {
+				return Room{}, ErrRoomNotFound
+			}
+			if current.Status != StatusAwaitingStakeConfirm || !s.isStakeConfirmExpired(current) {
+				return current, nil
+			}
+			current.Status = StatusCancelled
+			current.MatchID = ""
+			current.StakeConfirmDeadline = 0
+			current.StakeConfirmedUsers = nil
+			_ = s.repo.ClearReadySet(ctx, current.ID)
+			_ = s.repo.ClearStakeConfirmedSet(ctx, current.ID)
+			if err := s.repo.Save(ctx, current); err != nil {
+				return Room{}, fmt.Errorf("save room: %w", err)
+			}
+			return current, nil
+		})
+		if lockErr != nil {
+			continue
+		}
+		if updated.Status == StatusCancelled {
+			out = append(out, updated)
+		}
+	}
+	return out
+}
+
+func (s *Service) requiresStakeConfirmation(room Room) bool {
+	if s.disableMoney {
+		return false
+	}
+	if room.Stake <= 0 {
+		return false
+	}
+	if shouldAutofillWithBot(room) {
+		return false
+	}
+	return len(s.realPlayers(room)) >= 2
+}
+
+func (s *Service) realPlayers(room Room) []string {
+	out := make([]string, 0, len(room.Players))
+	for _, playerID := range room.Players {
+		if IsBotPlayer(playerID) {
+			continue
+		}
+		out = append(out, playerID)
+	}
+	return out
+}
+
+func (s *Service) allStakeConfirmed(room Room) bool {
+	realPlayers := s.realPlayers(room)
+	if len(realPlayers) == 0 {
+		return true
+	}
+	confirmed := make(map[string]struct{}, len(room.StakeConfirmedUsers))
+	for _, userID := range room.StakeConfirmedUsers {
+		confirmed[userID] = struct{}{}
+	}
+	for _, userID := range realPlayers {
+		if _, ok := confirmed[userID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) syncStakeConfirmedUsers(ctx context.Context, room *Room) error {
+	confirmed, err := s.repo.GetStakeConfirmedUsers(ctx, room.ID)
+	if err != nil {
+		return err
+	}
+	room.StakeConfirmedUsers = confirmed
+	return nil
+}
+
+func (s *Service) isStakeConfirmExpired(room Room) bool {
+	if room.StakeConfirmDeadline <= 0 {
+		return false
+	}
+	return time.Now().UTC().UnixMilli() > room.StakeConfirmDeadline
 }
 
 const botPlayerPrefix = "bot:"
@@ -362,4 +560,3 @@ end
 return 0`, []string{key}, token).Err()
 	}, nil
 }
-

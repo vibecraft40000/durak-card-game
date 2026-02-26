@@ -20,6 +20,7 @@ const mockRooms: Room[] = [
     deck: 36,
     mode: "Подкидной",
     readyUserIds: [],
+    stakeConfirmedUserIds: [],
   },
   {
     id: "room-202",
@@ -31,6 +32,7 @@ const mockRooms: Room[] = [
     deck: 52,
     mode: "Переводной",
     readyUserIds: [],
+    stakeConfirmedUserIds: [],
   },
 ];
 
@@ -104,6 +106,7 @@ export async function mockHttpRequest(
       deck: input.deck,
       mode: input.mode,
       readyUserIds: [],
+      stakeConfirmedUserIds: [],
     };
     mockRooms.unshift(room);
     return { room };

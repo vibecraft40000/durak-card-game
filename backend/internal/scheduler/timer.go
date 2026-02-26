@@ -156,6 +156,22 @@ func RunRoomCleanup(ctx context.Context, roomsService *rooms.Service, maxWait ti
 	}
 }
 
+func RunStakeConfirmationTimeouts(ctx context.Context, roomsService *rooms.Service, hub *ws.Hub) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cancelled := roomsService.CancelExpiredStakeConfirmations(ctx)
+			for _, room := range cancelled {
+				hub.Broadcast(room.ID, ws.ServerEvent{Type: "room_update", Payload: room})
+			}
+		}
+	}
+}
+
 // RunActiveMatchesReconcile removes orphaned IDs from matches:active (safety net for crashes).
 func RunActiveMatchesReconcile(ctx context.Context, gamesService *games.Service) {
 	ticker := time.NewTicker(5 * time.Minute)

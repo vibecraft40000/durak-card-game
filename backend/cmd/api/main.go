@@ -183,13 +183,13 @@ func main() {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"users_count":       usersCount,
-				"games_total":       stats.GamesTotal,
-				"games_active":      stats.GamesActive,
-				"games_finished":    stats.GamesFinished,
-				"deposits_count":    stats.DepositsCount,
-				"deposits_amount":   stats.DepositsAmount,
-				"withdrawals_count": stats.WithdrawalsCount,
+				"users_count":        usersCount,
+				"games_total":        stats.GamesTotal,
+				"games_active":       stats.GamesActive,
+				"games_finished":     stats.GamesFinished,
+				"deposits_count":     stats.DepositsCount,
+				"deposits_amount":    stats.DepositsAmount,
+				"withdrawals_count":  stats.WithdrawalsCount,
 				"withdrawals_amount": stats.WithdrawalsAmount,
 				"admin_adjust_count": stats.AdminAdjustCount,
 			})
@@ -333,6 +333,51 @@ func main() {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
 		})
+		router.Get("/admin/rooms/{id}/stake", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			roomID := chi.URLParam(r, "id")
+			room, err := roomsService.Get(r.Context(), roomID)
+			if err != nil {
+				http.Error(w, "room not found", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"room_id":                room.ID,
+				"status":                 room.Status,
+				"players":                room.Players,
+				"ready_users":            room.ReadyUsers,
+				"stake_confirmed_users":  room.StakeConfirmedUsers,
+				"stake_confirm_deadline": room.StakeConfirmDeadline,
+				"match_id":               room.MatchID,
+			})
+		})
+		router.Post("/admin/rooms/{id}/stake/confirm", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Admin-Secret") != adminSecret {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			roomID := chi.URLParam(r, "id")
+			var req struct {
+				UserID string `json:"user_id"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			if req.UserID == "" {
+				http.Error(w, "user_id is required", http.StatusBadRequest)
+				return
+			}
+			room, err := roomsService.ConfirmStake(r.Context(), roomID, req.UserID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "room": room})
+		})
 	}
 
 	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {
@@ -453,6 +498,7 @@ func main() {
 			return user.ID
 		}, roomsHandler.Join))
 		protected.Post("/api/rooms/{id}/ready", roomsHandler.Ready)
+		protected.Post("/api/rooms/{id}/stake/confirm", roomsHandler.ConfirmStake)
 		protected.Post("/api/rooms/{id}/start", roomsHandler.Start)
 		protected.Post("/api/rooms/{id}/leave", roomsHandler.Leave)
 		protected.Post("/api/deposit/create", cryptoPayHandler.CreateDepositInvoice)
@@ -491,6 +537,7 @@ func main() {
 	go scheduler.RunMatchTimers(ctx, gamesService, roomsService, hub, wsHandler)
 	go scheduler.RunDisconnectTimeouts(ctx, gamesService, roomsService, hub, walletService, cfg.CommissionBps, cfg.DisableMoney)
 	go scheduler.RunRoomCleanup(ctx, roomsService, cfg.RoomWaitTimeout)
+	go scheduler.RunStakeConfirmationTimeouts(ctx, roomsService, hub)
 	go scheduler.RunActiveMatchesReconcile(ctx, gamesService)
 	go scheduler.RunTurnDeadlinesReconcile(ctx, gamesService)
 	go func() {

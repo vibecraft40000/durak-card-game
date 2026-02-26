@@ -222,6 +222,20 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
+	case "confirm_stake":
+		room, err := h.rooms.ConfirmStake(ctx, client.RoomID, client.UserID)
+		if err != nil {
+			h.sendRoomError(client, err.Error())
+			return
+		}
+		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
+		if room.MatchID != "" {
+			state, err := h.games.GetState(ctx, room.MatchID)
+			if err == nil {
+				h.broadcastGameState(ctx, client.RoomID, state)
+				h.handleBotTurns(ctx, client.RoomID, room, state)
+			}
+		}
 	case "make_move":
 		allowed, rlErr := h.limiter.Allow(ctx, "make_move:"+client.UserID, 30, 10*time.Second)
 		if rlErr != nil {
@@ -699,23 +713,23 @@ func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engin
 		phase = "attack"
 	}
 	return GameStateDTO{
-		RoomID:         roomID,
-		MatchID:        state.MatchID,
-		Version:        state.Version,
-		Phase:          phase,
-		DeckType:       state.DeckType,
-		Mode:           state.Mode,
-		Players:        players,
-		TableCards:     state.TableCards,
-		TrumpSuit:      string(state.Trump),
-		TrumpCard:      trumpCard,
-		TurnPlayerID:   state.TurnPlayerID,
-		TurnEndsAt:     state.TurnEndsAt.UnixMilli(),
-		Status:         string(state.Status),
-		WinnerPlayerID: state.WinnerPlayer,
+		RoomID:          roomID,
+		MatchID:         state.MatchID,
+		Version:         state.Version,
+		Phase:           phase,
+		DeckType:        state.DeckType,
+		Mode:            state.Mode,
+		Players:         players,
+		TableCards:      state.TableCards,
+		TrumpSuit:       string(state.Trump),
+		TrumpCard:       trumpCard,
+		TurnPlayerID:    state.TurnPlayerID,
+		TurnEndsAt:      state.TurnEndsAt.UnixMilli(),
+		Status:          string(state.Status),
+		WinnerPlayerID:  state.WinnerPlayer,
 		WinnerPlayerIDs: state.WinnerPlayers,
-		IsDraw:         state.IsDraw,
-		FinishGroups:   state.FinishGroups,
+		IsDraw:          state.IsDraw,
+		FinishGroups:    state.FinishGroups,
 		Shuler: map[string]any{
 			"isWindowOpen": state.ShulerEnabled && !state.ShulerDetected,
 			"activePlayers": func() []string {

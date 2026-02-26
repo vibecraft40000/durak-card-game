@@ -10,10 +10,20 @@ export type Room = {
   maxPlayers: number;
   deck: DeckSize;
   mode: string;
-  status?: "waiting" | "starting" | "active" | "in_game" | "finished" | "cancelled";
+  status?:
+    | "waiting"
+    | "starting"
+    | "active"
+    | "awaiting_stake_confirm"
+    | "in_game"
+    | "finished"
+    | "cancelled";
   matchId?: string;
   readyPlayers?: number;
   readyUserIds: string[];
+  stakeConfirmedPlayers?: number;
+  stakeConfirmedUserIds: string[];
+  stakeConfirmDeadline?: number;
 };
 
 export type CreateRoomInput = {

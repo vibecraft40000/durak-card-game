@@ -2,7 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Room } from "@/entities/match/types";
 import { HttpError } from "@/shared/api/http";
-import { getRoom, joinRoom, leaveRoom, normalizeRoom, readyRoom, startRoom } from "@/shared/api/rooms";
+import {
+  confirmStake as confirmStakeRoom,
+  getRoom,
+  joinRoom,
+  leaveRoom,
+  normalizeRoom,
+  readyRoom,
+  startRoom,
+} from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { wsClient } from "@/shared/api/ws/socket";
@@ -21,6 +29,12 @@ function formatApiError(e: unknown, fallback = "Попробуйте снова.
       return "Недостаточно средств у одного из игроков. Пополните баланс.";
     if (body.includes("match start already in progress"))
       return "Старт уже выполняется. Подождите несколько секунд и попробуйте снова.";
+    if (body.includes("stake confirmation is required"))
+      return "Сначала все участники должны подтвердить ставку.";
+    if (body.includes("stake confirmation expired"))
+      return "Время подтверждения ставки истекло. Комната отменена.";
+    if (body.includes("only room participants can confirm stake"))
+      return "Подтверждать ставку могут только участники комнаты.";
     return body ? String(e.responseBody ?? e.message) : fallback;
   }
   return fallback;
@@ -59,14 +73,32 @@ export function GameRoomPage() {
 
   const room = useMemo(() => rooms.find((item) => item.id === id), [id, rooms]);
   const isCurrentUserConfirmed = room && currentUserId ? room.readyUserIds.includes(currentUserId) : false;
+  const isCurrentUserStakeConfirmed =
+    room && currentUserId ? room.stakeConfirmedUserIds.includes(currentUserId) : false;
   const playersCount = room ? (room.playerIds?.length ?? room.players ?? 0) : 0;
+  const realPlayersCount = room
+    ? room.playerIds.filter((playerId) => !playerId.startsWith("bot:")).length || playersCount
+    : 0;
   const isCreator = room && currentUserId && room.playerIds?.[0] === currentUserId;
   const allReady = room && (room.readyPlayers ?? 0) >= (room.players ?? room.maxPlayers ?? 2);
+  const allStakeConfirmed = room && (room.stakeConfirmedPlayers ?? 0) >= realPlayersCount;
+  const stakeConfirmDeadlineLabel = room?.stakeConfirmDeadline
+    ? new Date(room.stakeConfirmDeadline).toLocaleTimeString("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
   const canConfirm = Boolean(
     room &&
       room.status === "waiting" &&
       playersCount >= 2 &&
       !isCurrentUserConfirmed,
+  );
+  const canConfirmStake = Boolean(
+    room &&
+      room.status === "awaiting_stake_confirm" &&
+      playersCount >= 2 &&
+      !isCurrentUserStakeConfirmed,
   );
   const canStart = Boolean(
     room && room.status === "waiting" && isCreator && allReady && playersCount >= 2,
@@ -100,9 +132,38 @@ export function GameRoomPage() {
     }
   }
 
+  async function confirmStake() {
+    if (!id || !room || room.status !== "awaiting_stake_confirm") return;
+    if (isReadyLoading) return;
+    setIsReadyLoading(true);
+    setError(null);
+    setInfoMessage(null);
+
+    try {
+      wsClient.send({ type: "confirm_stake", payload: { roomId: id } });
+      const updatedRoom = await confirmStakeRoom(id);
+      setRooms([updatedRoom]);
+      setIsWaitingStart(true);
+      if (updatedRoom.matchId) {
+        navigate(`/game/${id}`);
+        return;
+      }
+      setInfoMessage("Ставка подтверждена. Ждем остальных игроков.");
+    } catch (e) {
+      const msg = formatApiError(e, "Не удалось подтвердить ставку. Попробуйте снова.");
+      setError(msg);
+    } finally {
+      setIsReadyLoading(false);
+    }
+  }
+
   async function handleStart() {
     if (!id) return;
     if (isStartLoading) return;
+    if (room?.status === "awaiting_stake_confirm") {
+      setInfoMessage("Сначала все игроки должны подтвердить ставку.");
+      return;
+    }
     if (!room || room.players < 2 || !allReady) {
       setInfoMessage("Сначала все должны подтвердить участие.");
       return;
@@ -146,6 +207,24 @@ export function GameRoomPage() {
       setRooms([normalized]);
       if (normalized.matchId) {
         navigate(`/game/${id}`);
+        return;
+      }
+      if (normalized.status === "awaiting_stake_confirm") {
+        const realPlayers =
+          normalized.playerIds.filter((playerId) => !playerId.startsWith("bot:")).length ||
+          normalized.players;
+        const confirmed = normalized.stakeConfirmedPlayers ?? 0;
+        if (realPlayers > 0) {
+          if (normalized.stakeConfirmDeadline) {
+            const leftSec = Math.max(
+              0,
+              Math.ceil((normalized.stakeConfirmDeadline - Date.now()) / 1000),
+            );
+            setInfoMessage(`Подтверждение ставки: ${confirmed}/${realPlayers}. Осталось ${leftSec} сек.`);
+          } else {
+            setInfoMessage(`Подтверждение ставки: ${confirmed}/${realPlayers}.`);
+          }
+        }
         return;
       }
       if (normalized.readyPlayers && normalized.readyPlayers >= normalized.maxPlayers && !normalized.matchId) {
@@ -242,6 +321,14 @@ export function GameRoomPage() {
             <div className="card__hint">
               Готовы: {room.readyPlayers ?? 0}/{room.players}
             </div>
+            {(room.status === "awaiting_stake_confirm" || (room.stakeConfirmedPlayers ?? 0) > 0) && (
+              <div className="card__hint">
+                Подтверждение ставки: {room.stakeConfirmedPlayers ?? 0}/{realPlayersCount}
+              </div>
+            )}
+            {room.status === "awaiting_stake_confirm" && stakeConfirmDeadlineLabel && (
+              <div className="card__hint">Дедлайн подтверждения: {stakeConfirmDeadlineLabel}</div>
+            )}
           </AppCard>
 
           <AppCard>
@@ -270,17 +357,38 @@ export function GameRoomPage() {
           </AppCard>
 
           <div className="action-list">
-            <AppButton
-              variant="primary"
-              type="button"
-              onClick={() => {
-                hapticImpact("medium");
-                void confirmReady();
-              }}
-              disabled={isReadyLoading || !canConfirm}
-            >
-              {isReadyLoading ? "Подключаем..." : "Подтвердить"}
-            </AppButton>
+            {room.status === "awaiting_stake_confirm" ? (
+              <AppButton
+                variant="primary"
+                type="button"
+                onClick={() => {
+                  hapticImpact("medium");
+                  void confirmStake();
+                }}
+                disabled={isReadyLoading || !canConfirmStake}
+              >
+                {isReadyLoading
+                  ? "Подтверждаем ставку..."
+                  : isCurrentUserStakeConfirmed
+                    ? "Ставка подтверждена"
+                    : "Подтвердить ставку"}
+              </AppButton>
+            ) : (
+              <AppButton
+                variant="primary"
+                type="button"
+                onClick={() => {
+                  hapticImpact("medium");
+                  void confirmReady();
+                }}
+                disabled={isReadyLoading || !canConfirm}
+              >
+                {isReadyLoading ? "Подключаем..." : isCurrentUserConfirmed ? "Подтверждено" : "Подтвердить"}
+              </AppButton>
+            )}
+            {room.status === "awaiting_stake_confirm" && !allStakeConfirmed && (
+              <div className="card__hint">Ожидаем подтверждение ставки от всех игроков.</div>
+            )}
             {canStart && (
               <AppButton
                 variant="primary"

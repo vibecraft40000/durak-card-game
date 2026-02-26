@@ -72,6 +72,16 @@ export async function readyRoom(roomId: string): Promise<Room> {
   return normalizeRoom(response.room);
 }
 
+export async function confirmStake(roomId: string): Promise<Room> {
+  const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/stake/confirm`, {
+    method: "POST",
+  });
+  if (!response.room || typeof response.room !== "object") {
+    throw new Error("Invalid response: room is missing");
+  }
+  return normalizeRoom(response.room);
+}
+
 export async function leaveRoom(roomId: string): Promise<Room> {
   const response = await httpRequest<RoomMutationResponse>(`/api/rooms/${roomId}/leave`, {
     method: "POST",
@@ -93,6 +103,15 @@ export function normalizeRoom(raw: Record<string, unknown>): Room {
     readyUserIds.length > 0
       ? readyUserIds.length
       : (Number.isFinite(Number(readyUsersRaw)) ? Number(readyUsersRaw) : 0);
+  const stakeConfirmedRaw = raw.stakeConfirmedUsers ?? raw.stake_confirmed_users;
+  const stakeConfirmedUserIds = Array.isArray(stakeConfirmedRaw)
+    ? stakeConfirmedRaw.map((item) => String(item))
+    : [];
+  const stakeConfirmedCount =
+    stakeConfirmedUserIds.length > 0
+      ? stakeConfirmedUserIds.length
+      : (Number.isFinite(Number(stakeConfirmedRaw)) ? Number(stakeConfirmedRaw) : 0);
+  const stakeConfirmDeadline = Number(raw.stakeConfirmDeadline ?? raw.stake_confirm_deadline ?? 0);
   return {
     id: String(raw.id ?? ""),
     title: String(raw.title ?? "Стол"),
@@ -106,5 +125,10 @@ export function normalizeRoom(raw: Record<string, unknown>): Room {
     matchId: String(raw.matchId ?? raw.match_id ?? ""),
     readyPlayers: Number.isFinite(readyCount) ? readyCount : 0,
     readyUserIds,
+    stakeConfirmedPlayers: Number.isFinite(stakeConfirmedCount) ? stakeConfirmedCount : 0,
+    stakeConfirmedUserIds,
+    stakeConfirmDeadline: Number.isFinite(stakeConfirmDeadline) && stakeConfirmDeadline > 0
+      ? stakeConfirmDeadline
+      : undefined,
   };
 }

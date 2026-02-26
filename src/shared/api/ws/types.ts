@@ -137,6 +137,10 @@ export type ClientWsEvent =
       payload: { roomId: string };
     }
   | {
+      type: "confirm_stake";
+      payload: { roomId: string };
+    }
+  | {
       type: "send_message";
       payload: { roomId: string; message: string };
     }
