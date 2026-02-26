@@ -9,6 +9,8 @@ export type UserProfile = {
   photo_url: string;
   display_name: string;
   currency: "USD";
+  language?: "ru" | "uk" | "en";
+  referral_code?: string;
 };
 
 type ProfileResponse = {
@@ -39,5 +41,12 @@ export async function patchUserSettings(input: {
   return httpRequest<SettingsResponse>("/api/user/settings", {
     method: "PATCH",
     body: input,
+  });
+}
+
+export async function patchProfileLanguage(language: "ru" | "uk"): Promise<{ user: UserProfile }> {
+  return httpRequest<{ user: UserProfile }>("/api/profile/language", {
+    method: "PATCH",
+    body: { language },
   });
 }

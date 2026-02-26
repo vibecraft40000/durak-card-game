@@ -2,9 +2,9 @@ import { NavLink } from "react-router-dom";
 import { PlayIcon, PlusIcon, UserIcon } from "@/shared/ui/Icons";
 
 const NAV_ITEMS = [
-  { to: "/play", label: "РРіСЂР°С‚СЊ", icon: PlayIcon },
-  { to: "/create", label: "РЎРѕР·РґР°С‚СЊ РёРіСЂСѓ", icon: PlusIcon },
-  { to: "/profile", label: "РџСЂРѕС„РёР»СЊ", icon: UserIcon },
+  { to: "/play", label: "Играть", icon: PlayIcon },
+  { to: "/create", label: "Создать игру", icon: PlusIcon },
+  { to: "/profile", label: "Профиль", icon: UserIcon },
 ];
 
 export function BottomNav() {

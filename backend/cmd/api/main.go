@@ -343,6 +343,7 @@ func main() {
 		protected.Get("/api/friends/requests", friendsHandler.Requests)
 		protected.Post("/api/friends/request", friendsHandler.Request)
 		protected.Post("/api/friends/accept", friendsHandler.Accept)
+		protected.Post("/api/friends/remove", friendsHandler.Remove)
 	})
 
 	router.Post("/webhooks/cryptopay", cryptoPayHandler.Webhook)

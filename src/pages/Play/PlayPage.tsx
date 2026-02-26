@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { GameMode, Room } from "@/entities/match/types";
 import { getRooms } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
@@ -145,6 +145,7 @@ function parseFiltersFromStorage(): FilterState | null {
 }
 
 export function PlayPage() {
+  const navigate = useNavigate();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [filters, setFilters] = useState<FilterState>(() => {
     if (typeof window === "undefined") return INITIAL_FILTERS;
@@ -156,6 +157,8 @@ export function PlayPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [joinRoomId, setJoinRoomId] = useState("");
+  const [joinRoomError, setJoinRoomError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
 
@@ -236,6 +239,29 @@ export function PlayPage() {
     });
   }, [filters.deck, filters.maxPlayers, filters.maxStake, filters.mode, rooms]);
 
+  const quickRoom = useMemo(
+    () => filteredRooms.find((room) => room.players < room.maxPlayers) ?? null,
+    [filteredRooms],
+  );
+
+  function handleQuickGame() {
+    if (quickRoom) {
+      navigate(`/room/${quickRoom.id}`);
+      return;
+    }
+    navigate("/create");
+  }
+
+  function handleConnectById() {
+    const roomId = joinRoomId.trim();
+    if (!roomId) {
+      setJoinRoomError("Введите ID игры");
+      return;
+    }
+    setJoinRoomError(null);
+    navigate(`/room/${roomId}`);
+  }
+
   const hasDeckFilter = filters.deck !== "all";
   const hasPlayersFilter = filters.maxPlayers !== "all";
   const hasStakeFilter = filters.maxStake !== INITIAL_FILTERS.maxStake;
@@ -261,7 +287,7 @@ export function PlayPage() {
             <AppButton
               type="button"
               className="play-screen__head-balance-add"
-              onClick={() => undefined /* TODO: navigate к пополнению */}
+              onClick={() => navigate("/profile/deposit")}
             >
               +
             </AppButton>
@@ -440,6 +466,31 @@ export function PlayPage() {
         <>
           <p className="screen__subtitle">Выберите комнату или создайте свой стол.</p>
 
+          <AppCard className="play-main-actions">
+            <Link className="button button--primary" to="/create">
+              Создать игру
+            </Link>
+            <button type="button" className="button" onClick={handleQuickGame}>
+              Быстрая игра
+            </button>
+            <div className="play-main-actions__join-row">
+              <input
+                value={joinRoomId}
+                onChange={(event) => {
+                  setJoinRoomId(event.target.value);
+                  if (joinRoomError) {
+                    setJoinRoomError(null);
+                  }
+                }}
+                placeholder="ID комнаты"
+              />
+              <button type="button" className="button" onClick={handleConnectById}>
+                Подключиться
+              </button>
+            </div>
+            {joinRoomError && <div className="card__hint card__hint--error">{joinRoomError}</div>}
+          </AppCard>
+
           <div className="play-quick-filters">
             <button
               type="button"
@@ -616,20 +667,8 @@ export function PlayPage() {
       )}
       </section>
 
-      <nav className="bottom-nav bottom-nav--three">
-        <Link to="/play" className="bottom-nav__item bottom-nav__item--active">
-          <DeckIcon size={20} />
-          <span>Играть</span>
-        </Link>
-        <Link to="/create-game" className="bottom-nav__item">
-          <ArrowRightThinIcon size={20} />
-          <span>Создать игру</span>
-        </Link>
-        <Link to="/profile" className="bottom-nav__item">
-          <UserIcon size={20} />
-          <span>Профиль</span>
-        </Link>
-      </nav>
+      
     </>
   );
 }
+

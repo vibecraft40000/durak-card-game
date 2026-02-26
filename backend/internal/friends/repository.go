@@ -109,3 +109,15 @@ WHERE friend_id = $1 AND status = $2`
 	}
 	return list, rows.Err()
 }
+
+func (r *Repository) RemoveFriend(ctx context.Context, userID, friendID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	query := `DELETE FROM friends
+WHERE (user_id = $1 AND friend_id = $2)
+   OR (user_id = $2 AND friend_id = $1)`
+	start := time.Now()
+	_, err := r.db.Exec(ctx, query, userID, friendID)
+	metrics.ObserveDBQuery("friends_remove", start)
+	return err
+}

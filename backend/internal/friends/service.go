@@ -42,3 +42,14 @@ func (s *Service) ListFriends(ctx context.Context, userID string) ([]Friend, err
 func (s *Service) ListIncomingRequests(ctx context.Context, userID string) ([]Friend, error) {
 	return s.repo.ListIncomingRequests(ctx, userID)
 }
+
+func (s *Service) RemoveFriend(ctx context.Context, userID string, friendIDOrUsername string) error {
+	friendID, ok := s.userRepo.ResolveID(ctx, friendIDOrUsername)
+	if !ok {
+		return errors.New("user not found")
+	}
+	if friendID == userID {
+		return ErrSelfFriend
+	}
+	return s.repo.RemoveFriend(ctx, userID, friendID)
+}

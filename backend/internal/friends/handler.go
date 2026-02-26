@@ -18,11 +18,11 @@ func NewHandler(service *Service, users *users.Repository) *Handler {
 }
 
 type friendResp struct {
-	ID        string `json:"id"`
-	UserID    string `json:"userId"`
-	FriendID  string `json:"friendId"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID        string      `json:"id"`
+	UserID    string      `json:"userId"`
+	FriendID  string      `json:"friendId"`
+	Status    string      `json:"status"`
+	CreatedAt string      `json:"createdAt"`
 	Friend    *users.User `json:"friend,omitempty"`
 }
 
@@ -38,11 +38,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := make([]friendResp, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
 	for _, f := range list {
 		otherID := f.FriendID
 		if otherID == user.ID {
 			otherID = f.UserID
 		}
+		if _, ok := seen[otherID]; ok {
+			continue
+		}
+		seen[otherID] = struct{}{}
 		other, _ := h.users.GetByID(r.Context(), otherID)
 		resp = append(resp, friendResp{
 			ID:        f.ID,
@@ -132,4 +137,28 @@ func (h *Handler) Requests(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"requests": resp})
+}
+
+func (h *Handler) Remove(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		FriendID string `json:"friendId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.FriendID == "" {
+		http.Error(w, "friendId required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.RemoveFriend(r.Context(), user.ID, req.FriendID); err != nil {
+		if err == ErrSelfFriend {
+			http.Error(w, "cannot remove yourself", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
