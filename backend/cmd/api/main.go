@@ -20,6 +20,7 @@ import (
 	"durakonline/backend/internal/friends"
 	"durakonline/backend/internal/games"
 	"durakonline/backend/internal/history"
+	"durakonline/backend/internal/money"
 	"durakonline/backend/internal/payments"
 	"durakonline/backend/internal/ratelimit"
 	"durakonline/backend/internal/rooms"
@@ -105,8 +106,18 @@ func main() {
 		webappURL = "https://durakonline.duckdns.org"
 	}
 	paymentsRepo := payments.NewRepository(postgresPool)
+	converter, err := money.NewConverter(cfg.FXRatesUSDPerUnit)
+	if err != nil {
+		log.Warn("invalid FX_RATES_USD_PER_UNIT, fallback to defaults",
+			zap.String("raw", cfg.FXRatesUSDPerUnit),
+			zap.Error(err),
+		)
+		converter, _ = money.NewConverter(money.DefaultFXRatesUSDPerUnit)
+	}
 	cryptoPayHandler := cryptopay.NewHandler(cfg.CryptoPayAPIToken, cfg.CryptoPayTestnet, txRepo, redisClient, webappURL, log).
-		WithPaymentsRepo(paymentsRepo)
+		WithPaymentsRepo(paymentsRepo).
+		WithMoneyConverter(converter).
+		WithWithdrawFees(cfg.WithdrawCardFeeBps, cfg.WithdrawCryptoFeeBps)
 	if cfg.AdminNotifyTelegramIDs != "" && cfg.TelegramBotToken != "" {
 		var notifyIDs []int64
 		for _, s := range strings.Split(cfg.AdminNotifyTelegramIDs, ",") {

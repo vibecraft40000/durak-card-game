@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"durakonline/backend/internal/money"
 	"durakonline/backend/internal/payments"
 	"durakonline/backend/internal/transactions"
 	"durakonline/backend/internal/users"
@@ -23,24 +24,39 @@ import (
 const paidInvoiceTTL = 30 * 24 * time.Hour
 
 type Handler struct {
-	client         *Client
-	txRepo         *transactions.Repository
-	paymentsRepo   *payments.Repository
-	redis          *redis.Client
-	token          string
-	webappURL      string
-	log            *zap.Logger
-	notifyBotToken string
-	notifyChatIDs  []int64
+	client             *Client
+	txRepo             *transactions.Repository
+	paymentsRepo       *payments.Repository
+	redis              *redis.Client
+	token              string
+	webappURL          string
+	log                *zap.Logger
+	notifyBotToken     string
+	notifyChatIDs      []int64
+	converter          *money.Converter
+	withdrawCardFeeBps int
+	withdrawCryptoBps  int
 }
 
 func NewHandler(token string, testnet bool, txRepo *transactions.Repository, r *redis.Client, webappURL string, log *zap.Logger) *Handler {
 	useTestnet := testnet || strings.HasPrefix(token, "test")
 	client := NewClient(token, useTestnet)
+	converter, _ := money.NewConverter("")
 	if log == nil {
 		log = zap.NewNop()
 	}
-	return &Handler{client: client, txRepo: txRepo, paymentsRepo: nil, redis: r, token: token, webappURL: webappURL, log: log}
+	return &Handler{
+		client:             client,
+		txRepo:             txRepo,
+		paymentsRepo:       nil,
+		redis:              r,
+		token:              token,
+		webappURL:          webappURL,
+		log:                log,
+		converter:          converter,
+		withdrawCardFeeBps: 200,
+		withdrawCryptoBps:  0,
+	}
 }
 
 // WithPaymentsRepo enables creating payments records for CryptoPay deposits (audit trail).
@@ -56,10 +72,44 @@ func (h *Handler) WithNotifyOnWithdraw(botToken string, chatIDs []int64) *Handle
 	return h
 }
 
+func (h *Handler) WithMoneyConverter(converter *money.Converter) *Handler {
+	if converter != nil {
+		h.converter = converter
+	}
+	return h
+}
+
+func (h *Handler) WithWithdrawFees(cardFeeBps, cryptoFeeBps int) *Handler {
+	if cardFeeBps < 0 {
+		cardFeeBps = 0
+	}
+	if cryptoFeeBps < 0 {
+		cryptoFeeBps = 0
+	}
+	h.withdrawCardFeeBps = cardFeeBps
+	h.withdrawCryptoBps = cryptoFeeBps
+	return h
+}
+
 const withdrawLockTTL = 30 * time.Second
 
-// CreateWithdraw: списывает средства с баланса и создаёт заявку на ручной вывод.
-// Деньги пользователю отправляет администратор вручную (бот только уведомляет админа).
+const (
+	withdrawMethodCrypto = "crypto"
+	withdrawMethodCard   = "card"
+)
+
+type withdrawNotification struct {
+	Method         string
+	SourceAmount   float64
+	SourceCurrency string
+	SourceRateUSD  float64
+	DebitUSD       float64
+	FeeBps         int
+	FeeUSD         float64
+	PayoutUSD      float64
+	BalanceBefore  float64
+}
+
 func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -74,14 +124,37 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 		}
 
 		var req struct {
-			Amount float64 `json:"amount"`
+			Amount   float64 `json:"amount"`
+			Currency string  `json:"currency"`
+			Method   string  `json:"method"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
-		if req.Amount < 5 || req.Amount > 1000 {
-			http.Error(w, "amount must be 5-1000 USD", http.StatusBadRequest)
+
+		method, err := normalizeWithdrawMethod(req.Method)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		sourceCurrency := money.NormalizeCurrency(req.Currency)
+		amountUSD, sourceRateUSD, err := h.toUSD(req.Amount, sourceCurrency)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if amountUSD < 5 || amountUSD > 1000 {
+			http.Error(w, "amount must be 5-1000 USD equivalent", http.StatusBadRequest)
+			return
+		}
+
+		feeBps := h.withdrawFeeBps(method)
+		feeUSD := money.Round2(amountUSD * float64(feeBps) / 10000.0)
+		payoutUSD := money.Round2(amountUSD - feeUSD)
+		if payoutUSD <= 0 {
+			http.Error(w, "withdraw amount too small after fee", http.StatusBadRequest)
 			return
 		}
 
@@ -91,24 +164,25 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 			http.Error(w, "failed to check balance", http.StatusInternalServerError)
 			return
 		}
-		if balance < req.Amount {
+		if balance < amountUSD {
 			http.Error(w, "insufficient balance", http.StatusBadRequest)
 			return
 		}
 
 		lockKey := "withdraw:lock:" + user.ID
-		okLock, err := h.redis.SetNX(ctx, lockKey, "1", withdrawLockTTL).Result()
-		if err != nil || !okLock {
-			http.Error(w, "withdraw in progress or too many attempts", http.StatusTooManyRequests)
-			return
+		if h.redis != nil {
+			okLock, lockErr := h.redis.SetNX(ctx, lockKey, "1", withdrawLockTTL).Result()
+			if lockErr != nil || !okLock {
+				http.Error(w, "withdraw in progress or too many attempts", http.StatusTooManyRequests)
+				return
+			}
+			defer h.redis.Del(ctx, lockKey)
 		}
-		defer h.redis.Del(ctx, lockKey)
 
-		// Фиксируем транзакцию вывода (баланс уменьшается сразу).
 		_, err = h.txRepo.Add(ctx, transactions.Transaction{
 			UserID: user.ID,
 			Type:   transactions.TypeWithdraw,
-			Amount: -req.Amount,
+			Amount: -amountUSD,
 			Status: transactions.StatusConfirmed,
 		})
 		if err != nil {
@@ -117,19 +191,37 @@ func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc
 			return
 		}
 
-		// Уведомляем админа в Telegram — кто и сколько хочет вывести.
-		h.notifyWithdraw(ctx, &user, balance, req.Amount)
+		h.notifyWithdraw(ctx, &user, withdrawNotification{
+			Method:         method,
+			SourceAmount:   req.Amount,
+			SourceCurrency: sourceCurrency,
+			SourceRateUSD:  sourceRateUSD,
+			DebitUSD:       amountUSD,
+			FeeBps:         feeBps,
+			FeeUSD:         feeUSD,
+			PayoutUSD:      payoutUSD,
+			BalanceBefore:  balance,
+		})
 
-		// Отвечаем клиенту, что заявка создана; никаких CryptoPay вызовов.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok",
-			"amount": req.Amount,
+			"status":          "ok",
+			"transferId":      0,
+			"asset":           "USD",
+			"amount":          amountUSD,
+			"method":          method,
+			"currency":        sourceCurrency,
+			"sourceAmount":    req.Amount,
+			"sourceUsdRate":   sourceRateUSD,
+			"debitAmountUsd":  amountUSD,
+			"feeBps":          feeBps,
+			"feeAmountUsd":    feeUSD,
+			"payoutAmountUsd": payoutUSD,
 		})
 	}
 }
 
-func (h *Handler) notifyWithdraw(ctx context.Context, user *users.User, balanceBefore float64, amount float64) {
+func (h *Handler) notifyWithdraw(ctx context.Context, user *users.User, data withdrawNotification) {
 	if h.notifyBotToken == "" || len(h.notifyChatIDs) == 0 {
 		return
 	}
@@ -144,7 +236,6 @@ func (h *Handler) notifyWithdraw(ctx context.Context, user *users.User, balanceB
 	if strings.TrimSpace(user.Username) != "" {
 		usernameLine = "@" + user.Username + "\n"
 	}
-	// Статистика по пополнениям/выводам.
 	var deposits, withdrawals float64
 	if h.txRepo != nil {
 		if d, wtot, err := h.txRepo.StatsForUser(ctx, user.ID); err == nil {
@@ -153,19 +244,28 @@ func (h *Handler) notifyWithdraw(ctx context.Context, user *users.User, balanceB
 			h.log.Warn("notify withdraw: stats failed", zap.String("user_id", user.ID), zap.Error(err))
 		}
 	}
-	balanceAfter := balanceBefore - amount
+	balanceAfter := data.BalanceBefore - data.DebitUSD
+	methodTitle := strings.ToUpper(data.Method)
 
 	text := fmt.Sprintf(
-		"💰 <b>Заявка на вывод</b>\n\n"+
-			"Пользователь: %s\n%sTelegram ID: <code>%d</code>\n"+
-			"<a href=\"tg://user?id=%d\">Открыть профиль в Telegram</a>\n\n"+
-			"Сумма вывода: <b>%.2f USD</b>\n"+
-			"Баланс до вывода: <b>%.2f USD</b>\n"+
-			"Баланс после вывода: <b>%.2f USD</b>\n\n"+
-			"Всего пополнений: <b>%.2f USD</b>\n"+
-			"Всего выводов: <b>%.2f USD</b>",
+		"<b>Withdraw request</b>\n\n"+
+			"User: %s\n%sTelegram ID: <code>%d</code>\n"+
+			"<a href=\"tg://user?id=%d\">Open Telegram profile</a>\n\n"+
+			"Method: <b>%s</b>\n"+
+			"Requested: <b>%.2f %s</b>\n"+
+			"FX rate: <b>1 %s = %.6f USD</b>\n"+
+			"Debit from balance: <b>%.2f USD</b>\n"+
+			"Fee: <b>%d bps (%.2f USD)</b>\n"+
+			"Payout to user: <b>%.2f USD</b>\n"+
+			"Balance before: <b>%.2f USD</b>\n"+
+			"Balance after: <b>%.2f USD</b>\n\n"+
+			"Deposits total: <b>%.2f USD</b>\n"+
+			"Withdrawals total: <b>%.2f USD</b>",
 		displayName, usernameLine, user.TelegramID, user.TelegramID,
-		amount, balanceBefore, balanceAfter, deposits, withdrawals,
+		methodTitle, data.SourceAmount, data.SourceCurrency,
+		data.SourceCurrency, data.SourceRateUSD,
+		data.DebitUSD, data.FeeBps, data.FeeUSD, data.PayoutUSD,
+		data.BalanceBefore, balanceAfter, deposits, withdrawals,
 	)
 
 	body := map[string]any{"chat_id": 0, "text": text, "parse_mode": "HTML", "disable_web_page_preview": true}
@@ -189,23 +289,31 @@ func (h *Handler) CreateDepositInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Amount float64 `json:"amount"`
+		Amount   float64 `json:"amount"`
+		Currency string  `json:"currency"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.Amount < 1 || req.Amount > 1000 {
-		http.Error(w, "amount must be 1-1000 USD", http.StatusBadRequest)
+
+	sourceCurrency := money.NormalizeCurrency(req.Currency)
+	amountUSD, sourceRateUSD, err := h.toUSD(req.Amount, sourceCurrency)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if amountUSD < 1 || amountUSD > 1000 {
+		http.Error(w, "amount must be 1-1000 USD equivalent", http.StatusBadRequest)
 		return
 	}
 
 	inv, err := h.client.CreateInvoice(CreateInvoiceReq{
 		CurrencyType: "fiat",
 		Fiat:         "USD",
-		Amount:       strconv.FormatFloat(req.Amount, 'f', 2, 64),
+		Amount:       strconv.FormatFloat(amountUSD, 'f', 2, 64),
 		Payload:      user.ID,
-		Description:  "Durak Online — пополнение баланса",
+		Description:  "Durak Online - balance top up",
 		ExpiresIn:    3600,
 	})
 	if err != nil {
@@ -219,11 +327,47 @@ func (h *Handler) CreateDepositInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"invoiceId":  inv.InvoiceID,
-		"invoiceUrl": url,
-		"amount":     req.Amount,
-		"status":     inv.Status,
+		"invoiceId":      inv.InvoiceID,
+		"invoiceUrl":     url,
+		"amount":         amountUSD,
+		"amountUsd":      amountUSD,
+		"sourceAmount":   req.Amount,
+		"sourceCurrency": sourceCurrency,
+		"sourceUsdRate":  sourceRateUSD,
+		"status":         inv.Status,
 	})
+}
+
+func (h *Handler) toUSD(amount float64, currency string) (float64, float64, error) {
+	if amount <= 0 {
+		return 0, 0, fmt.Errorf("amount must be positive")
+	}
+	if h.converter == nil {
+		converter, err := money.NewConverter("")
+		if err != nil {
+			return 0, 0, fmt.Errorf("fx converter is not configured")
+		}
+		h.converter = converter
+	}
+	return h.converter.ToUSD(amount, currency)
+}
+
+func (h *Handler) withdrawFeeBps(method string) int {
+	if method == withdrawMethodCard {
+		return h.withdrawCardFeeBps
+	}
+	return h.withdrawCryptoBps
+}
+
+func normalizeWithdrawMethod(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "crypto", "usdt", "cryptobot":
+		return withdrawMethodCrypto, nil
+	case "card", "bank_card", "bank-card":
+		return withdrawMethodCard, nil
+	default:
+		return "", fmt.Errorf("unsupported withdraw method")
+	}
 }
 
 func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
