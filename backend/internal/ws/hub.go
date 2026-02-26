@@ -62,10 +62,10 @@ func (c *Client) Close() {
 const maxConnectionsPerUser = 5
 
 type Hub struct {
-	mu             sync.Mutex
-	clients        map[string]map[*Client]struct{}
-	connsPerUser   map[string]int // userID -> connection count
-	closed         atomic.Bool
+	mu           sync.Mutex
+	clients      map[string]map[*Client]struct{}
+	connsPerUser map[string]int // userID -> connection count
+	closed       atomic.Bool
 }
 
 func NewHub() *Hub {
@@ -168,6 +168,21 @@ func (h *Hub) Send(client *Client, event ServerEvent) bool {
 		return false
 	}
 	return true
+}
+
+// SnapshotRoomClients returns a stable copy of current clients in a room.
+func (h *Hub) SnapshotRoomClients(roomID string) []*Client {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	roomClients, ok := h.clients[roomID]
+	if !ok || len(roomClients) == 0 {
+		return nil
+	}
+	out := make([]*Client, 0, len(roomClients))
+	for client := range roomClients {
+		out = append(out, client)
+	}
+	return out
 }
 
 func (h *Hub) countClientsLocked() int {

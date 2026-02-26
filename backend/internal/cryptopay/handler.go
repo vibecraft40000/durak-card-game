@@ -7,11 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"durakonline/backend/internal/payments"
@@ -22,45 +19,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
-
-// #region agent log
-var debugLogMu sync.Mutex
-
-func writeDebugLog(location, message, hypothesisId string, data map[string]interface{}) {
-	debugLogMu.Lock()
-	defer debugLogMu.Unlock()
-	logPath := "debug-d47ef9.log"
-	if wd, _ := os.Getwd(); wd != "" {
-		if filepath.Base(wd) == "backend" {
-			logPath = filepath.Join("..", logPath)
-		}
-	}
-	entry := map[string]interface{}{
-		"id": "log_" + strconv.FormatInt(time.Now().UnixMilli(), 10),
-		"timestamp": time.Now().UnixMilli(),
-		"location":  location,
-		"message":   message,
-		"data":      data,
-		"hypothesisId": hypothesisId,
-		"sessionId": "d47ef9",
-	}
-	raw, _ := json.Marshal(entry)
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	f.Write(append(raw, '\n'))
-	f.Close()
-}
-
-func strOrEmpty(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-// #endregion
 
 const paidInvoiceTTL = 30 * 24 * time.Hour
 
@@ -261,10 +219,10 @@ func (h *Handler) CreateDepositInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"invoiceId":     inv.InvoiceID,
-		"invoiceUrl":    url,
-		"amount":        req.Amount,
-		"status":        inv.Status,
+		"invoiceId":  inv.InvoiceID,
+		"invoiceUrl": url,
+		"amount":     req.Amount,
+		"status":     inv.Status,
 	})
 }
 
@@ -280,11 +238,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:Webhook", "webhook received", "A", map[string]interface{}{
-		"bodyLen": len(body), "hasSig": r.Header.Get("crypto-pay-api-signature") != "",
-	})
-	// #endregion
 
 	h.log.Info("cryptopay webhook: received",
 		zap.Int("body_len", len(body)),
@@ -293,11 +246,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	sig := r.Header.Get("crypto-pay-api-signature")
 	sigOk := VerifyWebhookSignature(h.token, body, sig)
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:afterSig", "signature verified", "B", map[string]interface{}{
-		"sigOk": sigOk, "tokenLen": len(h.token), "sigLen": len(sig),
-	})
-	// #endregion
 	if !sigOk {
 		h.log.Warn("cryptopay webhook: invalid signature")
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
@@ -311,12 +259,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:afterParse", "parsed webhook", "C", map[string]interface{}{
-		"updateType": update.UpdateType, "status": update.Payload.Status,
-		"invoiceId": update.Payload.InvoiceID,
-	})
-	// #endregion
 	if update.UpdateType != "invoice_paid" || update.Payload.Status != "paid" {
 		h.log.Debug("cryptopay webhook: ignored", zap.String("type", update.UpdateType))
 		w.WriteHeader(http.StatusOK)
@@ -325,11 +267,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	userID := update.Payload.Payload
 	invoiceID := update.Payload.InvoiceID
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:userID", "user payload", "D", map[string]interface{}{
-		"userID": userID, "userIDEmpty": userID == "", "invoiceId": invoiceID,
-	})
-	// #endregion
 	if userID == "" {
 		h.log.Warn("cryptopay webhook: empty user payload", zap.Int64("invoice_id", invoiceID))
 		w.WriteHeader(http.StatusOK)
@@ -338,11 +275,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 
 	key := "cryptopay:paid:" + strconv.FormatInt(invoiceID, 10)
 	ok, err := h.redis.SetNX(r.Context(), key, "1", paidInvoiceTTL).Result()
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:setnx", "redis SetNX", "H", map[string]interface{}{
-		"setnxOk": ok, "redisErr": strOrEmpty(err), "invoiceId": invoiceID,
-	})
-	// #endregion
 	if err != nil || !ok {
 		if !ok {
 			h.log.Debug("cryptopay webhook: duplicate invoice", zap.Int64("invoice_id", invoiceID))
@@ -352,13 +284,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	amountUSD := parsePaidAmountUSD(update.Payload)
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:amountUSD", "parsed amount", "G", map[string]interface{}{
-		"amountUSD": amountUSD, "currencyType": update.Payload.CurrencyType,
-		"fiat": update.Payload.Fiat, "amount": update.Payload.Amount,
-		"paidAmount": update.Payload.PaidAmount, "paidUsdRate": update.Payload.PaidUsdRate,
-	})
-	// #endregion
 	if amountUSD <= 0 {
 		h.log.Warn("cryptopay webhook: invalid amount", zap.Int64("invoice_id", invoiceID))
 		w.WriteHeader(http.StatusOK)
@@ -371,11 +296,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		Amount: amountUSD,
 		Status: transactions.StatusConfirmed,
 	})
-	// #region agent log
-	writeDebugLog("cryptopay/handler.go:txAdd", "txRepo.Add result", "E", map[string]interface{}{
-		"addErr": strOrEmpty(err), "userID": userID, "amountUSD": amountUSD,
-	})
-	// #endregion
 	if err != nil {
 		h.redis.Del(r.Context(), key)
 		h.log.Error("cryptopay webhook: credit failed",

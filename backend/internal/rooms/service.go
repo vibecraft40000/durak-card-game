@@ -148,6 +148,14 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 	}
 	room.Status = StatusConfirmed
 	matchID := uuid.NewString()
+	heldPlayers := make([]string, 0, len(room.Players))
+	rollbackHolds := func() {
+		for _, playerID := range heldPlayers {
+			if err := s.wallet.RollbackHoldBet(ctx, playerID, matchID); err != nil {
+				log.Printf("[start] rollback hold failed room=%s match=%s player=%s err=%v", room.ID, matchID, playerID, err)
+			}
+		}
+	}
 	if !s.disableMoney {
 		for _, playerID := range room.Players {
 			if IsBotPlayer(playerID) {
@@ -155,14 +163,17 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 			}
 			if err := s.wallet.HoldBet(ctx, playerID, matchID, room.Stake); err != nil {
 				log.Printf("[start] HoldBet failed room=%s player=%s err=%v", room.ID, playerID, err)
+				rollbackHolds()
 				_ = s.repo.ReleaseStartLock(ctx, room.ID)
 				_ = s.repo.ClearReadySet(ctx, room.ID)
 				return Room{}, err
 			}
+			heldPlayers = append(heldPlayers, playerID)
 		}
 	}
 	if _, err := s.games.StartMatch(ctx, matchID, room.Stake, room.Mode, room.Players); err != nil {
 		log.Printf("[start] StartMatch failed room=%s match=%s err=%v", room.ID, matchID, err)
+		rollbackHolds()
 		_ = s.repo.ReleaseStartLock(ctx, room.ID)
 		_ = s.repo.ClearReadySet(ctx, room.ID)
 		return Room{}, err

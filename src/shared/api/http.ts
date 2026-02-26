@@ -55,29 +55,6 @@ export async function httpRequest<T>(path: string, options: RequestOptions = {})
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (err) {
-    // #region agent log
-    fetch("http://127.0.0.1:7658/ingest/8c12422b-b1ba-4515-b1f8-f29b4e599d6e", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "42d28e",
-      },
-      body: JSON.stringify({
-        sessionId: "42d28e",
-        runId: "pre-fix",
-        hypothesisId: "H2",
-        location: "src/shared/api/http.ts:httpRequest",
-        message: "Network error in httpRequest",
-        data: {
-          path,
-          method,
-          baseUrl: API_BASE_URL,
-          errorMessage: err instanceof Error ? err.message : String(err),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     throw err;
   }
 
@@ -91,32 +68,6 @@ export async function httpRequest<T>(path: string, options: RequestOptions = {})
         return httpRequest<T>(path, { ...options, headers: { ...headers, Authorization: `Bearer ${retryToken}` } });
       }
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7658/ingest/8c12422b-b1ba-4515-b1f8-f29b4e599d6e", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "42d28e",
-      },
-      body: JSON.stringify({
-        sessionId: "42d28e",
-        runId: "pre-fix",
-        hypothesisId: "H1",
-        location: "src/shared/api/http.ts:httpRequest",
-        message: "Non-OK HTTP response in httpRequest",
-        data: {
-          path,
-          method,
-          baseUrl: API_BASE_URL,
-          status: response.status,
-          statusText: response.statusText,
-          // We intentionally log only structured error info (no secrets).
-          errorBody: parsed,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     throw new HttpError(`Request failed: ${response.status}`, response.status, parsed);
   }
 

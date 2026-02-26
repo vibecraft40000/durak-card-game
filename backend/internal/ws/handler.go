@@ -190,10 +190,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 			}
 			state, err := h.games.GetState(ctx, room.MatchID)
 			if err == nil {
-				h.broadcast(ctx, client.RoomID, ServerEvent{
-					Type:    "game_state",
-					Payload: h.toGameStateDTO(ctx, client.RoomID, state),
-				})
+				h.broadcastGameState(ctx, client.RoomID, state)
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
@@ -207,7 +204,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 		if room.MatchID != "" {
 			state, err := h.games.GetState(ctx, room.MatchID)
 			if err == nil {
-				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+				h.broadcastGameState(ctx, client.RoomID, state)
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
@@ -221,7 +218,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 		if room.MatchID != "" {
 			state, err := h.games.GetState(ctx, room.MatchID)
 			if err == nil {
-				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+				h.broadcastGameState(ctx, client.RoomID, state)
 				h.handleBotTurns(ctx, client.RoomID, room, state)
 			}
 		}
@@ -258,7 +255,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 				// Handled separately: send game_state + version_mismatch, no error
 				currentState, getErr := h.games.GetState(ctx, room.MatchID)
 				if getErr == nil {
-					_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, currentState)})
+					_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, currentState, client.UserID)})
 					_ = h.hub.Send(client, ServerEvent{
 						Type: "version_mismatch",
 						Payload: map[string]any{
@@ -293,7 +290,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 				"cardId":   cardID,
 			},
 		})
-		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+		h.broadcastGameState(ctx, client.RoomID, state)
 		h.broadcast(ctx, client.RoomID, ServerEvent{
 			Type: "timer_update",
 			Payload: map[string]any{
@@ -358,7 +355,7 @@ func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event C
 		}
 		state, err := h.games.GetState(ctx, room.MatchID)
 		if err == nil {
-			_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state)})
+			_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state, client.UserID)})
 		}
 	default:
 		h.sendRoomError(client, "unsupported event type")
@@ -416,7 +413,7 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 				"cardId":   cardID,
 			},
 		})
-		h.broadcast(ctx, roomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, roomID, nextState)})
+		h.broadcastGameState(ctx, roomID, nextState)
 		h.broadcast(ctx, roomID, ServerEvent{
 			Type: "timer_update",
 			Payload: map[string]any{
@@ -486,7 +483,7 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 			"cardId":   result.CardID,
 		},
 	})
-	h.broadcast(ctx, roomID, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, roomID, result.State)})
+	h.broadcastGameState(ctx, roomID, result.State)
 	h.broadcast(ctx, roomID, ServerEvent{
 		Type: "timer_update",
 		Payload: map[string]any{
@@ -520,6 +517,39 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 		return
 	}
 	h.handleBotTurns(ctx, roomID, room, result.State)
+}
+
+func (h *Handler) broadcastGameStateLocal(ctx context.Context, roomID string, state engine.GameState) {
+	clients := h.hub.SnapshotRoomClients(roomID)
+	for _, client := range clients {
+		_ = h.hub.Send(client, ServerEvent{
+			Type:    "game_state",
+			Payload: h.toGameStateDTO(ctx, roomID, state, client.UserID),
+		})
+	}
+}
+
+func (h *Handler) broadcastGameState(ctx context.Context, roomID string, state engine.GameState) {
+	h.broadcastGameStateLocal(ctx, roomID, state)
+	if h.bus != nil {
+		_ = h.bus.Publish(ctx, roomID, ServerEvent{Type: "game_state_internal", Payload: state})
+	}
+}
+
+func (h *Handler) HandleBusEvent(ctx context.Context, roomID string, event ServerEvent) {
+	if event.Type == "game_state_internal" {
+		raw, err := json.Marshal(event.Payload)
+		if err != nil {
+			return
+		}
+		var state engine.GameState
+		if err := json.Unmarshal(raw, &state); err != nil {
+			return
+		}
+		h.broadcastGameStateLocal(ctx, roomID, state)
+		return
+	}
+	h.hub.Broadcast(roomID, event)
 }
 
 func (h *Handler) broadcast(ctx context.Context, roomID string, event ServerEvent) {
@@ -600,11 +630,19 @@ func (h *Handler) sendRoomErrorWithCode(client *Client, message string, errorCod
 	_ = h.hub.Send(client, ServerEvent{Type: "error", Payload: payload})
 }
 
-func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engine.GameState) GameStateDTO {
+func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engine.GameState, viewerUserID string) GameStateDTO {
 	players := make([]PlayerDTO, 0, len(state.Hands))
 	for _, playerID := range state.PlayerOrder {
 		hand := state.Hands[playerID]
-		displayName := "player-" + playerID[:4]
+		var playerHand []engine.Card
+		if playerID == viewerUserID {
+			playerHand = hand
+		}
+		shortID := playerID
+		if len(shortID) > 4 {
+			shortID = shortID[:4]
+		}
+		displayName := "player-" + shortID
 		photoURL := ""
 		if rooms.IsBotPlayer(playerID) {
 			displayName = "bot"
@@ -620,7 +658,7 @@ func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engin
 			DisplayName:   displayName,
 			PhotoURL:      photoURL,
 			HandCount:     len(hand),
-			Hand:          hand,
+			Hand:          playerHand,
 			IsCurrentTurn: state.TurnPlayerID == playerID,
 		})
 	}
@@ -630,7 +668,9 @@ func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engin
 		trumpCard = &c
 	}
 	phase := string(state.TurnState)
-	if phase == "" {
+	if state.Status == engine.StatusFinished {
+		phase = "result"
+	} else if phase == "" {
 		phase = "attack"
 	}
 	return GameStateDTO{

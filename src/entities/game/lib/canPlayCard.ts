@@ -1,6 +1,6 @@
 /**
  * Local validation for playing a card (mirrors server rules).
- * Used for drag & drop — reject invalid drops before WS send.
+ * Used for drag & drop to reject invalid drops before WS send.
  */
 import type { Card } from "@/entities/card/types";
 import type { MatchStatePayload } from "@/shared/api/ws/types";
@@ -23,7 +23,7 @@ function rankValue(rank: string): number {
 
 type CardLike = { suit: string; rank: string };
 
-/** Card A beats card B (A defends against B). Trump beats non-trump; same suit higher rank. */
+/** Card A beats card B (A defends against B). */
 function cardBeats(attack: CardLike, defend: CardLike, trumpSuit: string): boolean {
   if (defend.suit === trumpSuit && attack.suit !== trumpSuit) return true;
   if (attack.suit !== trumpSuit && defend.suit === trumpSuit) return false;
@@ -37,47 +37,53 @@ export function canPlayCard(
   currentUserId: string | null,
 ): { valid: boolean; action?: "attack" | "defend" } {
   if (!state || !currentUserId) return { valid: false };
-  if (state.phase !== "playing") return { valid: false };
-
-  const myIndex = typeof state.mySeatIndex === "number" ? state.mySeatIndex : -1;
-  if (myIndex < 0 || !state.seats || !state.seats[myIndex]) {
+  const phase = typeof state.phase === "string" ? state.phase : "";
+  if (phase !== "attack" && phase !== "defend" && phase !== "playing") {
+    return { valid: false };
+  }
+  if (state.turnPlayerId && state.turnPlayerId !== currentUserId) {
     return { valid: false };
   }
 
-  const piles = state.tablePiles ?? [];
+  const piles = state.tablePiles ?? buildTablePilesFromLegacy(state.tableCards ?? []);
   const trumpSuit = state.trumpSuit ?? "";
 
-  const isAttacker = state.attackerSeat === myIndex;
-  const isDefender = state.defenderSeat === myIndex;
-
-  // Defender logic: can we beat at least one open attack on table?
-  if (isDefender) {
+  // Defender logic.
+  if (phase === "defend") {
     const openAttacks = piles.filter((p) => !p.defend);
-    if (!openAttacks.length) return { valid: false };
-
-    // For now, target the last open attack (closest to current interaction)
+    if (openAttacks.length === 0) return { valid: false };
     const target = openAttacks[openAttacks.length - 1].attack;
-    return cardBeats(target, card, trumpSuit) ? { valid: true, action: "defend" } : { valid: false };
+    return cardBeats(target, card, trumpSuit)
+      ? { valid: true, action: "defend" }
+      : { valid: false };
   }
 
-  // Attacker logic: first throw or подкидывание by rank
-  if (isAttacker) {
+  // Attacker logic.
+  if (typeof state.capacityOnTable === "number" && state.capacityOnTable > 0) {
     if (piles.length >= state.capacityOnTable) return { valid: false };
-
-    // First attack: any card is allowed
-    if (piles.length === 0) {
-      return { valid: true, action: "attack" };
-    }
-
-    // Subsequent throws: rank must be allowed by server rules
-    const allowedRanks = state.allowedRanks ?? [];
-    if (allowedRanks.includes(card.rank)) {
-      return { valid: true, action: "attack" };
-    }
-
-    return { valid: false };
+  }
+  if (piles.length === 0) {
+    return { valid: true, action: "attack" };
   }
 
-  // Neither attacker nor defender: cannot play a card
+  const allowedRanks = state.allowedRanks ?? [];
+  if (allowedRanks.length === 0 || allowedRanks.includes(card.rank)) {
+    return { valid: true, action: "attack" };
+  }
+
   return { valid: false };
+}
+
+function buildTablePilesFromLegacy(cards: Card[]): Array<{ attack: Card; defend?: Card }> {
+  if (!Array.isArray(cards) || cards.length === 0) {
+    return [];
+  }
+  const out: Array<{ attack: Card; defend?: Card }> = [];
+  for (let index = 0; index < cards.length; index += 2) {
+    out.push({
+      attack: cards[index],
+      defend: cards[index + 1],
+    });
+  }
+  return out;
 }

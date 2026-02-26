@@ -95,12 +95,12 @@ export function GameTablePage() {
 
   const matchState = gameState.matchState;
   useEffect(() => {
-    if (matchState?.finish) {
+    if (gameState.matchResult) {
       void getProfile()
         .then((r) => setProfileBalance(r.balance))
         .catch(() => undefined);
     }
-  }, [matchState?.finish]);
+  }, [gameState.matchResult]);
 
   const currentPhase = useMemo(
     () => selectCurrentPhase(gameState),
@@ -108,8 +108,8 @@ export function GameTablePage() {
   );
 
   const orderedSeats = useMemo(
-    () => selectOrderedSeats(gameState),
-    [gameState],
+    () => selectOrderedSeats(gameState, currentUserId),
+    [gameState, currentUserId],
   );
   const meSeat = orderedSeats[0];
   const seatOpponents = orderedSeats.slice(1);
@@ -160,31 +160,61 @@ export function GameTablePage() {
     return [];
   }, [matchState]);
 
-  const finish = matchState?.finish;
+  const finish = useMemo(() => {
+    if (matchState?.finish) {
+      return matchState.finish;
+    }
+    if (!gameState.matchResult) {
+      return null;
+    }
+    const payouts: Record<string, number> = {};
+    for (const item of gameState.matchResult.payouts) {
+      payouts[item.userId] = item.amount;
+    }
+    const places = [...gameState.matchResult.payouts]
+      .sort((a, b) => b.amount - a.amount)
+      .map((item) => item.userId);
+    return {
+      bank: gameState.matchResult.pot ?? 0,
+      commission: gameState.matchResult.commission ?? 0,
+      payouts,
+      places,
+    };
+  }, [gameState.matchResult, matchState?.finish]);
   const mainWinnerId = finish?.places?.[0];
-  const mainWinnerSeat = mainWinnerId && matchState?.seats
-    ? matchState.seats.find((seat) => seat.id === mainWinnerId)
-    : undefined;
-  const winnerName: string | null = mainWinnerSeat?.name ?? null;
+  const winnerName: string | null = useMemo(() => {
+    if (!mainWinnerId) return null;
+    const fromSeats = matchState?.seats?.find((seat) => seat.id === mainWinnerId)?.name;
+    if (fromSeats) return fromSeats;
+    const fromPlayers = players.find((player: any) => player.id === mainWinnerId);
+    return fromPlayers?.displayName ?? fromPlayers?.username ?? null;
+  }, [mainWinnerId, matchState?.seats, players]);
 
   const myPayout =
     finish && currentUserId ? finish.payouts[currentUserId] ?? 0 : 0;
   const isWinner = !!finish && myPayout > 0;
 
   const turnPlayerName: string | null = useMemo(() => {
-    if (!matchState || typeof matchState.turnSeatIndex !== "number") return null;
-    const seats = matchState.seats;
-    if (!seats || !seats[matchState.turnSeatIndex]) return null;
-    return seats[matchState.turnSeatIndex].name ?? null;
-  }, [matchState]);
+    if (!matchState) return null;
+    if (typeof matchState.turnPlayerId === "string" && matchState.turnPlayerId) {
+      const turnPlayer = players.find((player: any) => player.id === matchState.turnPlayerId);
+      if (turnPlayer) {
+        return turnPlayer.displayName ?? turnPlayer.username ?? null;
+      }
+    }
+    if (typeof matchState.turnSeatIndex === "number" && matchState.seats?.[matchState.turnSeatIndex]) {
+      return matchState.seats[matchState.turnSeatIndex].name ?? null;
+    }
+    return null;
+  }, [matchState, players]);
 
   const isAttackerRole = useMemo(
-    () => selectIsAttacker(gameState),
-    [gameState],
+    () => selectIsAttacker(gameState, currentUserId),
+    [gameState, currentUserId],
   );
   const isDefenderRole = useMemo(
-    () => selectIsDefender(gameState),
-    [gameState],
+    () => selectIsDefender(gameState, currentUserId),
+    [gameState, currentUserId],
   );
 
   useEffect(() => {

@@ -1,4 +1,5 @@
 import os
+import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -6,7 +7,10 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-SECRET_KEY = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY") or "change-me-in-production"
+SECRET_KEY = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = os.urandom(32).hex()
+    warnings.warn("FLASK_SECRET_KEY/SECRET_KEY is not set; using ephemeral generated key.", RuntimeWarning)
 SQLALCHEMY_DATABASE_URI = os.environ.get("ADMIN_DATABASE_URI") or "sqlite:///admin_data.db"
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 

@@ -121,15 +121,27 @@ class WsClient {
   sendIntent(type: IntentType, payload?: ClientIntent["payload"]) {
     const gameState = getGameState();
     const version = gameState.matchState?.version ?? 0;
-    const intent: ClientIntent = {
-      type,
-      actionId: crypto.randomUUID(),
-      expectedVersion: version,
-      payload,
-    };
+    const payloadObj = (payload ?? {}) as Record<string, unknown>;
+    const roomId =
+      (typeof payloadObj.roomId === "string" && payloadObj.roomId) || this.connectedRoomId;
+    const action = mapIntentToWireAction(type);
+    if (!roomId || !action) {
+      return;
+    }
+    const cardId = typeof payloadObj.cardId === "string" ? payloadObj.cardId : undefined;
+    const actionId = crypto.randomUUID();
 
     setInteractionLocked(true);
-    this.send({ type: "intent", payload: intent });
+    this.send({
+      type: "make_move",
+      payload: {
+        roomId,
+        action,
+        ...(cardId ? { cardId } : {}),
+        expectedVersion: version,
+        actionId,
+      },
+    });
   }
 
   disconnect() {
@@ -150,6 +162,31 @@ function tryParse(data: string): ServerWsEvent | null {
 }
 
 export const wsClient = new WsClient();
+
+function mapIntentToWireAction(type: IntentType):
+  | "attack_card"
+  | "defend_card"
+  | "take_cards"
+  | "pass_turn"
+  | null {
+  switch (type) {
+    case "playAttack":
+    case "throwIn":
+    case "translate":
+      return "attack_card";
+    case "playDefend":
+      return "defend_card";
+    case "take":
+      return "take_cards";
+    case "pass":
+    case "endTurn":
+    case "confirmStake":
+    case "shulerReport":
+      return "pass_turn";
+    default:
+      return null;
+  }
+}
 
 function resolveWsUrl(raw: string): URL {
   if (raw.startsWith("ws://") || raw.startsWith("wss://")) {

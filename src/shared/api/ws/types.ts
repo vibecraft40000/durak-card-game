@@ -39,19 +39,19 @@ export interface MatchStatePayload {
   lastActionId?: string;
 
   // High-level phase of the match
-  phase: "betting" | "playing" | "result";
+  phase: "betting" | "playing" | "attack" | "defend" | "result";
 
   // Table configuration
-  deckType: 24 | 36 | 52;
-  mode: "podkidnoy" | "perevodnoy";
-  stakeUsd: number;
+  deckType?: 24 | 36 | 52;
+  mode?: "podkidnoy" | "perevodnoy";
+  stakeUsd?: number;
   trumpSuit: string;
 
   // Deck / table state
-  stockCount: number;
-  discardCount: number;
-  capacityOnTable: number;
-  allowedRanks: string[];
+  stockCount?: number;
+  discardCount?: number;
+  capacityOnTable?: number;
+  allowedRanks?: string[];
   /** Absolute timestamp (ms since epoch) when current turn ends */
   turnEndsAt?: number;
   /** Seat index of player whose turn it is (attacker/defender/thrower depending on phase) */
@@ -66,13 +66,13 @@ export interface MatchStatePayload {
   }[];
 
   // Players and roles
-  seats: Seat[];
-  attackerSeat: number;
-  defenderSeat: number;
+  seats?: Seat[];
+  attackerSeat?: number;
+  defenderSeat?: number;
 
   // Current viewer data
-  myHand: string[];
-  mySeatIndex: number;
+  myHand?: string[];
+  mySeatIndex?: number;
 
   // Shuler ability / report window
   shuler?: {

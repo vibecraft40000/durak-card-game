@@ -7,8 +7,8 @@ import (
 
 	"durakonline/backend/internal/transactions"
 	"durakonline/backend/pkg/metrics"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,6 +36,20 @@ func (s *Service) HoldBet(ctx context.Context, userID, matchID string, stake flo
 		time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
 	}
 	return errors.New("hold bet failed after retries")
+}
+
+// RollbackHoldBet compensates a previously created bet_hold when match start fails.
+func (s *Service) RollbackHoldBet(ctx context.Context, userID, matchID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := s.db.Exec(ctx, `
+DELETE FROM transactions
+WHERE user_id = $1 AND match_id = $2 AND type = 'bet_hold' AND status = 'confirmed'`,
+		userID, matchID,
+	)
+	metrics.ObserveDBQuery("tx_rollback_bet_hold", start)
+	return err
 }
 
 func (s *Service) holdBetOnce(ctx context.Context, userID, matchID string, stake float64) error {

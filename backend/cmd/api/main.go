@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"strings"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,8 +37,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	mw "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"github.com/joho/godotenv"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -214,7 +215,7 @@ func main() {
 	}
 
 	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {
-		return r.RemoteAddr
+		return requestIP(r)
 	}, authHandler.TelegramAuth))
 	router.Post("/auth/refresh", authHandler.Refresh)
 
@@ -345,7 +346,14 @@ func main() {
 	})
 
 	router.Post("/webhooks/cryptopay", cryptoPayHandler.Webhook)
-	router.Post("/api/wallet/webhook", paymentsHandler.Webhook)
+	walletWebhookPath := strings.TrimSpace(cfg.WalletPayWebhookPath)
+	if walletWebhookPath == "" {
+		walletWebhookPath = "/api/wallet/webhook"
+	}
+	if !strings.HasPrefix(walletWebhookPath, "/") {
+		walletWebhookPath = "/" + walletWebhookPath
+	}
+	router.Post(walletWebhookPath, paymentsHandler.Webhook)
 	router.Get("/ws", wsHandler.ServeWS)
 
 	server := &http.Server{
@@ -365,19 +373,21 @@ func main() {
 	go scheduler.RunTurnDeadlinesReconcile(ctx, gamesService)
 	go func() {
 		_ = bus.Subscribe(ctx, func(roomID string, event ws.ServerEvent) {
-			hub.Broadcast(roomID, event)
+			wsHandler.HandleBusEvent(ctx, roomID, event)
 		})
 	}()
-	go func() {
-		pprofServer := &http.Server{
-			Addr:              ":" + cfg.PprofPort,
-			Handler:           http.DefaultServeMux,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
-		if err := pprofServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("pprof server failed", zap.Error(err))
-		}
-	}()
+	if cfg.Env != "production" {
+		go func() {
+			pprofServer := &http.Server{
+				Addr:              "127.0.0.1:" + cfg.PprofPort,
+				Handler:           http.DefaultServeMux,
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			if err := pprofServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error("pprof server failed", zap.Error(err))
+			}
+		}()
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -496,4 +506,15 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func requestIP(r *http.Request) string {
+	host := strings.TrimSpace(r.RemoteAddr)
+	if host == "" {
+		return "unknown"
+	}
+	if ip, _, err := net.SplitHostPort(host); err == nil && ip != "" {
+		return ip
+	}
+	return host
 }
