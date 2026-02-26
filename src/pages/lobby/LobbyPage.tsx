@@ -1,18 +1,20 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Room } from "@/entities/match/types";
 import { getRooms } from "@/shared/api/rooms";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 
 export function LobbyPage() {
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-
     void loadRooms(controller.signal);
-
     return () => controller.abort();
   }, []);
 
@@ -23,7 +25,7 @@ export function LobbyPage() {
       const data = await getRooms(signal);
       setRooms(data);
     } catch {
-      setError("Не удалось загрузить столы. Проверьте API и попробуйте снова.");
+      setError(tr("Не удалось загрузить столы. Проверьте API и попробуйте снова.", "Не вдалося завантажити столи. Перевірте API і спробуйте ще раз."));
     } finally {
       setIsLoading(false);
     }
@@ -31,25 +33,25 @@ export function LobbyPage() {
 
   return (
     <section className="screen">
-      <h1 className="screen__title">Лобби</h1>
-      <p className="screen__subtitle">Выберите стол для входа в матч на ставку.</p>
+      <h1 className="screen__title">{tr("Лобби", "Лобі")}</h1>
+      <p className="screen__subtitle">{tr("Выберите стол для входа в матч на ставку.", "Оберіть стіл для входу в матч на ставку.")}</p>
 
-      {isLoading && <div className="card__hint">Загрузка столов...</div>}
+      {isLoading && <div className="card__hint">{tr("Загрузка столов...", "Завантаження столів...")}</div>}
 
       {error && (
         <div className="card">
           <div className="card__hint">{error}</div>
           <button className="button" type="button" onClick={() => void loadRooms()}>
-            Повторить
+            {tr("Повторить", "Повторити")}
           </button>
         </div>
       )}
 
       {!isLoading && !error && rooms.length === 0 && (
         <div className="card">
-          <div className="card__hint">Активных столов пока нет. Создайте первый.</div>
+          <div className="card__hint">{tr("Активных столов пока нет. Создайте первый.", "Активних столів поки немає. Створіть перший.")}</div>
           <Link className="button button--primary" to="/play/create">
-            Создать игру
+            {tr("Создать игру", "Створити гру")}
           </Link>
         </div>
       )}
@@ -62,10 +64,10 @@ export function LobbyPage() {
               <span>${room.stakeUsd}</span>
             </div>
             <div className="card__hint">
-              {room.mode} · {room.players}/{room.maxPlayers} · колода {room.deck}
+              {room.mode} · {room.players}/{room.maxPlayers} · {tr("колода", "колода")} {room.deck}
             </div>
             <Link className="button button--primary" to={`/room/${room.id}`}>
-              Играть
+              {tr("Играть", "Грати")}
             </Link>
           </article>
         ))}

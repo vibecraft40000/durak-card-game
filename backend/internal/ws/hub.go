@@ -192,3 +192,9 @@ func (h *Hub) countClientsLocked() int {
 	}
 	return total
 }
+
+func (h *Hub) IsUserOnline(userID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.connsPerUser[userID] > 0
+}

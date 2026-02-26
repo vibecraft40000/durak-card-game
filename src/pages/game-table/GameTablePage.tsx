@@ -8,6 +8,7 @@ import type { Card } from "@/entities/card/types";
 import { joinGameRoom } from "@/processes/joinGame.process";
 import { getRoom, leaveRoom } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import {
   hapticImpact,
   hapticNotification,
@@ -53,11 +54,16 @@ type ChatReaction = {
   createdAt: number;
 };
 
-const QUICK_CHAT_REACTIONS = ["Беру!", "Бито!", "Пас!", "Ход!"];
+const QUICK_CHAT_REACTIONS: Record<"ru" | "uk", string[]> = {
+  ru: ["Беру!", "Бито!", "Пас!", "Ход!"],
+  uk: ["Беру!", "Бито!", "Пас!", "Хід!"],
+};
 
 export function GameTablePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
   const [room, setRoom] = useState<Room | null>(null);
   const [gameState, setGameState] = useState(getGameState());
   const [isRoomLoading, setIsRoomLoading] = useState(true);
@@ -71,6 +77,7 @@ export function GameTablePage() {
   const [chatReactions, setChatReactions] = useState<ChatReaction[]>([]);
   const currency = "USD";
   const tableZoneRef = useRef<HTMLDivElement>(null);
+  const quickChatReactions = QUICK_CHAT_REACTIONS[language];
 
   useEffect(() => {
     void getProfile()
@@ -85,7 +92,7 @@ export function GameTablePage() {
     function onIntentError(ev: Event) {
       const ce = ev as CustomEvent;
       const detail = (ce.detail ?? {}) as { text?: string; code?: string; raw?: unknown };
-      const text = detail.text || "Ошибка выполнения действия.";
+      const text = detail.text || tr("Ошибка выполнения действия.", "Помилка виконання дії.");
       const code = detail.code;
 
       // eslint-disable-next-line no-console
@@ -104,7 +111,7 @@ export function GameTablePage() {
     return () => {
       window.removeEventListener("tma:intentError", onIntentError as EventListener);
     };
-  }, [navigate]);
+  }, [language, navigate]);
 
   useEffect(() => {
     const offChat = onWsEvent("chat_message", ({ payload }) => {
@@ -419,7 +426,7 @@ export function GameTablePage() {
       {interactionLocked && (
         <div className="reconnect-overlay" role="status" aria-live="polite">
           <div className="reconnect-overlay__content">
-            <p className="reconnect-overlay__text">Синхронизация…</p>
+            <p className="reconnect-overlay__text">{tr("Синхронизация…", "Синхронізація…")}</p>
           </div>
         </div>
       )}
@@ -427,7 +434,7 @@ export function GameTablePage() {
         <button
           type="button"
           className="icon-button"
-          aria-label="Назад"
+          aria-label={tr("Назад", "Назад")}
           onClick={() => {
             if (currentPhase === "playing") {
               setIsExitModalOpen(true);
@@ -438,7 +445,7 @@ export function GameTablePage() {
         >
           <BackIcon size={17} />
         </button>
-        <h1 className="page-header__title">Игровой стол</h1>
+        <h1 className="page-header__title">{tr("Игровой стол", "Ігровий стіл")}</h1>
         <div className="page-header__spacer" />
       </div>
 
@@ -446,7 +453,7 @@ export function GameTablePage() {
 
       {gameState.status === "connecting" && room && (
         <AppCard>
-          <div className="card__hint">Подключение к игре...</div>
+          <div className="card__hint">{tr("Подключение к игре...", "Підключення до гри...")}</div>
         </AppCard>
       )}
 
@@ -464,16 +471,19 @@ export function GameTablePage() {
               wsClient.connect(id);
             }}
           >
-            Повторить подключение
+            {tr("Повторить подключение", "Повторити підключення")}
           </AppButton>
         </AppCard>
       )}
 
       {!isRoomLoading && !room && (
         <EmptyStateBlock
-          title="Комната не найдена"
-          message="Стол недоступен. Вернитесь в список игр и выберите другую комнату."
-          actionLabel="К списку игр"
+          title={tr("Комната не найдена", "Кімнату не знайдено")}
+          message={tr(
+            "Стол недоступен. Вернитесь в список игр и выберите другую комнату.",
+            "Стіл недоступний. Поверніться до списку ігор та виберіть іншу кімнату.",
+          )}
+          actionLabel={tr("К списку игр", "До списку ігор")}
           onAction={() => navigate("/play")}
         />
       )}
@@ -504,17 +514,19 @@ export function GameTablePage() {
                       key={seat.id}
                     >
                       <AppAvatar
-                        name={seat.name ?? `Игрок ${index + 1}`}
+                        name={seat.name ?? tr(`Игрок ${index + 1}`, `Гравець ${index + 1}`)}
                         photoUrl={seat.avatarUrl}
                         className="game-opponent__avatar"
                       />
                       <div className="game-opponent__name">
-                        {seat.name ?? `Игрок ${index + 1}`}
+                        {seat.name ?? tr(`Игрок ${index + 1}`, `Гравець ${index + 1}`)}
                       </div>
                       {shulerPlayers.has(seat.id) && (
-                        <div className="game-opponent__badge game-opponent__badge--shuler">Шулер</div>
+                        <div className="game-opponent__badge game-opponent__badge--shuler">
+                          {tr("Шулер", "Шулер")}
+                        </div>
                       )}
-                      <div className="game-opponent__cards" title="Карт на руке">
+                      <div className="game-opponent__cards" title={tr("Карт на руке", "Карт на руці")}>
                         {seat.cardCount}
                       </div>
                     </div>
@@ -525,17 +537,19 @@ export function GameTablePage() {
                       key={player.id}
                     >
                       <AppAvatar
-                        name={player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                        name={player.displayName ?? player.username ?? tr(`Игрок ${index + 1}`, `Гравець ${index + 1}`)}
                         photoUrl={player.photoUrl}
                         className="game-opponent__avatar"
                       />
                       <div className="game-opponent__name">
-                        {player.displayName ?? player.username ?? `Игрок ${index + 1}`}
+                        {player.displayName ?? player.username ?? tr(`Игрок ${index + 1}`, `Гравець ${index + 1}`)}
                       </div>
                       {shulerPlayers.has(player.id) && (
-                        <div className="game-opponent__badge game-opponent__badge--shuler">Шулер</div>
+                        <div className="game-opponent__badge game-opponent__badge--shuler">
+                          {tr("Шулер", "Шулер")}
+                        </div>
                       )}
-                      <div className="game-opponent__cards" title="Карт на руке">
+                      <div className="game-opponent__cards" title={tr("Карт на руке", "Карт на руці")}>
                         {player.handCount}
                       </div>
                     </div>
@@ -572,21 +586,21 @@ export function GameTablePage() {
                   })}
                 </motion.div>
               ) : (
-                <div className="game-board__table-empty">Стол пока пуст</div>
+                <div className="game-board__table-empty">{tr("Стол пока пуст", "Стіл поки порожній")}</div>
               )}
             </div>
 
             <div className="game-board__turn">
               {isMyTurn
-                ? "Ваш ход"
+                ? tr("Ваш ход", "Ваш хід")
                 : turnPlayerName
-                  ? `Ход: ${turnPlayerName}`
-                  : "Ход соперника"}
+                  ? tr(`Ход: ${turnPlayerName}`, `Хід: ${turnPlayerName}`)
+                  : tr("Ход соперника", "Хід суперника")}
               {gameState.error && <span className="game-board__error"> · {gameState.error}</span>}
             </div>
             {gameState.reconnectingPlayerId && gameState.reconnectingPlayerId !== currentUserId && (
               <div className="game-board__reconnect-hint card__hint card__hint--center">
-                Соперник отключился. Ожидание 60 сек...
+                {tr("Соперник отключился. Ожидание 60 сек...", "Суперник відключився. Очікування 60 сек...")}
               </div>
             )}
           </AppCard>
@@ -597,20 +611,20 @@ export function GameTablePage() {
                 className={`game-opponent game-opponent--me ${isMyTurn ? "game-opponent--turn" : ""} ${isMyTurn && secondsLeft != null && secondsLeft <= 5 ? "game-opponent--urgent" : ""}`}
               >
                 <AppAvatar
-                  name={meSeat?.name ?? currentPlayer?.displayName ?? currentPlayer?.username ?? "Вы"}
+                  name={meSeat?.name ?? currentPlayer?.displayName ?? currentPlayer?.username ?? tr("Вы", "Ви")}
                   photoUrl={meSeat?.avatarUrl ?? currentPlayer?.photoUrl}
                   className="game-opponent__avatar"
                 />
                 <div className="game-opponent__info">
-                  <span className="game-opponent__name">Вы</span>
+                  <span className="game-opponent__name">{tr("Вы", "Ви")}</span>
                   {isAttackerRole && (
-                    <span className="game-opponent__role">Атакуете</span>
+                    <span className="game-opponent__role">{tr("Атакуете", "Атакуєте")}</span>
                   )}
                   {isDefenderRole && !isAttackerRole && (
-                    <span className="game-opponent__role">Защищаетесь</span>
+                    <span className="game-opponent__role">{tr("Защищаетесь", "Захищаєтесь")}</span>
                   )}
                   {currentUserId && shulerPlayers.has(currentUserId) && (
-                    <span className="game-opponent__badge game-opponent__badge--shuler">Шулер</span>
+                    <span className="game-opponent__badge game-opponent__badge--shuler">{tr("Шулер", "Шулер")}</span>
                   )}
                 </div>
                 <div className="game-opponent__cards">
@@ -618,7 +632,7 @@ export function GameTablePage() {
                 </div>
               </div>
             </div>
-            <div className="card__label">Ваши карты</div>
+            <div className="card__label">{tr("Ваши карты", "Ваші карти")}</div>
             {currentPlayer?.handCount ? (
               hasDetailedHand && !isMockApiEnabled() ? (
                 <PlayerHandFan
@@ -655,7 +669,7 @@ export function GameTablePage() {
                 </div>
               )
             ) : (
-              <div className="card__hint">Карт на руке нет</div>
+              <div className="card__hint">{tr("Карт на руке нет", "Карт на руці немає")}</div>
             )}
           </AppCard>
 
@@ -666,14 +680,14 @@ export function GameTablePage() {
                 onClick={() => sendAction("attack")}
                 disabled={!canAttack || interactionLocked || (hasDetailedHand && !selectedCardId)}
               >
-                Ход
+                {tr("Ход", "Хід")}
               </AppButton>
               <AppButton
                 type="button"
                 onClick={() => sendAction("defend")}
                 disabled={!canDefend || interactionLocked || (hasDetailedHand && !selectedCardId)}
               >
-                Защита
+                {tr("Защита", "Захист")}
               </AppButton>
               <div
                 className="action-take-wrap"
@@ -685,7 +699,7 @@ export function GameTablePage() {
                   onClick={() => sendAction("take")}
                   disabled={!canTake || interactionLocked}
                 >
-                  Беру
+                  {tr("Беру", "Беру")}
                 </AppButton>
               </div>
             </div>
@@ -695,7 +709,7 @@ export function GameTablePage() {
                 onClick={() => sendAction("pass")}
                 disabled={!canPass || interactionLocked}
               >
-                Бито
+                {tr("Бито", "Бито")}
               </AppButton>
               {isTranslateMode && (
                 <AppButton
@@ -703,7 +717,7 @@ export function GameTablePage() {
                   onClick={() => sendAction("translate")}
                   disabled={!canTranslate || interactionLocked || (hasDetailedHand && !selectedCardId)}
                 >
-                  Перевести
+                  {tr("Перевести", "Перевести")}
                 </AppButton>
               )}
               {canReportShuler && (
@@ -712,18 +726,18 @@ export function GameTablePage() {
                   onClick={() => sendAction("shuler_report")}
                   disabled={interactionLocked}
                 >
-                  Сообщить о шулере
+                  {tr("Сообщить о шулере", "Повідомити про шулера")}
                 </AppButton>
               )}
               <Link className="button" to={`/game/${id}/friends`}>
-                Друзья
+                {tr("Друзья", "Друзі")}
               </Link>
               <AppButton type="button" onClick={() => setIsExitModalOpen(true)}>
-                Выйти
+                {tr("Выйти", "Вийти")}
               </AppButton>
             </div>
             <div className="game-actions__balance">
-              Ваш баланс:{" "}
+              {tr("Ваш баланс", "Ваш баланс")}:{" "}
               {(() => {
                 const fromNewBalances =
                   currentUserId && gameState.matchResult?.newBalances?.[currentUserId];
@@ -737,9 +751,9 @@ export function GameTablePage() {
           </AppCard>
 
           <AppCard className="game-chat">
-            <div className="card__label">Чат и реакции</div>
+            <div className="card__label">{tr("Чат и реакции", "Чат і реакції")}</div>
             <div className="game-chat__quick">
-              {QUICK_CHAT_REACTIONS.map((item) => (
+              {quickChatReactions.map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -754,11 +768,11 @@ export function GameTablePage() {
               {chatReactions.length > 0 ? (
                 chatReactions.slice(-4).map((item) => (
                   <div key={item.id} className="game-chat__item">
-                    <strong>{playerNameById[item.userId] ?? "Игрок"}:</strong> {item.message}
+                    <strong>{playerNameById[item.userId] ?? tr("Игрок", "Гравець")}:</strong> {item.message}
                   </div>
                 ))
               ) : (
-                <div className="card__hint">Сообщений пока нет</div>
+                <div className="card__hint">{tr("Сообщений пока нет", "Повідомлень поки немає")}</div>
               )}
             </div>
             <div className="game-chat__composer">
@@ -766,7 +780,7 @@ export function GameTablePage() {
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
                 maxLength={120}
-                placeholder="Введите сообщение..."
+                placeholder={tr("Введите сообщение...", "Введіть повідомлення...")}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -775,13 +789,13 @@ export function GameTablePage() {
                 }}
               />
               <AppButton type="button" onClick={() => sendChatMessage(chatInput)}>
-                Отправить
+                {tr("Отправить", "Надіслати")}
               </AppButton>
             </div>
           </AppCard>
 
           <AppCard>
-            <div className="card__label">Лог событий</div>
+            <div className="card__label">{tr("Лог событий", "Лог подій")}</div>
             {gameState.activity.length ? (
               <div className="list">
                 {gameState.activity.slice(-10).map((item, index) => (
@@ -798,29 +812,29 @@ export function GameTablePage() {
                 ))}
               </div>
             ) : (
-              <div className="card__hint">Событий пока нет</div>
+              <div className="card__hint">{tr("Событий пока нет", "Подій поки немає")}</div>
             )}
           </AppCard>
 
           {finish && (
             <div className="result-card">
               <div className="result-card__title">
-                {isWinner ? "Победа!" : "Игра завершена"}
+                {isWinner ? tr("Победа!", "Перемога!") : tr("Игра завершена", "Гру завершено")}
               </div>
               <div className="result-card__message">
                 {isWinner && gameState.matchFinishedAbandoned
-                  ? "Соперник не вернулся. Победа."
+                  ? tr("Соперник не вернулся. Победа.", "Суперник не повернувся. Перемога.")
                   : winnerName
-                    ? `Победитель: ${winnerName}`
-                    : "Ожидание итогового расчета."}
+                    ? tr(`Победитель: ${winnerName}`, `Переможець: ${winnerName}`)
+                    : tr("Ожидание итогового расчета.", "Очікування підсумкового розрахунку.")}
               </div>
               <div className="result-card__summary">
-                <div>Банк: {finish.bank.toFixed(2)} USD</div>
-                <div>Комиссия: {finish.commission.toFixed(2)} USD</div>
-                <div>Ваш выигрыш: {myPayout.toFixed(2)} USD</div>
+                <div>{tr("Банк", "Банк")}: {finish.bank.toFixed(2)} USD</div>
+                <div>{tr("Комиссия", "Комісія")}: {finish.commission.toFixed(2)} USD</div>
+                <div>{tr("Ваш выигрыш", "Ваш виграш")}: {myPayout.toFixed(2)} USD</div>
               </div>
               <div className="result-card__places">
-                <div className="result-card__places-title">Результаты игроков</div>
+                <div className="result-card__places-title">{tr("Результаты игроков", "Результати гравців")}</div>
                 <div className="result-card__places-list">
                   {finish.places.map((playerId, index) => {
                     const seat = matchState?.seats?.find((s) => s.id === playerId);
@@ -837,7 +851,7 @@ export function GameTablePage() {
                           <span className="result-card__place-number">{placeNumber}</span>
                           <span className="result-card__place-name">
                             {name}
-                            {isMeRow ? " (Вы)" : ""}
+                            {isMeRow ? tr(" (Вы)", " (Ви)") : ""}
                           </span>
                         </div>
                         <div className="result-card__place-right">
@@ -856,7 +870,7 @@ export function GameTablePage() {
                   navigate(isWinner ? "/finish/win" : "/finish/lose");
                 }}
               >
-                Продолжить
+                {tr("Продолжить", "Продовжити")}
               </button>
             </div>
           )}
@@ -865,10 +879,10 @@ export function GameTablePage() {
 
       <ConfirmModal
         isOpen={isExitModalOpen}
-        title="Выйти из игры?"
-        message="Вы покинули активную игру. Вернуться?"
-        cancelLabel="Вернуться"
-        confirmLabel="Покинуть"
+        title={tr("Выйти из игры?", "Вийти з гри?")}
+        message={tr("Вы покинули активную игру. Вернуться?", "Ви покидаєте активну гру. Повернутися?")}
+        cancelLabel={tr("Вернуться", "Повернутися")}
+        confirmLabel={tr("Покинуть", "Покинути")}
         onCancel={() => setIsExitModalOpen(false)}
         onConfirm={() => {
           if (id) {

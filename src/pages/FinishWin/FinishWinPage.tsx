@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { getProfile } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { hapticNotification } from "@/shared/lib/telegram";
 import { useCountUp } from "@/shared/hooks/useCountUp";
 import { getGameState, subscribeGameStore } from "@/store/game.store";
@@ -9,9 +10,10 @@ import { getGameState, subscribeGameStore } from "@/store/game.store";
 export function FinishWinPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const currency = "USD";
-  const [matchResult, setMatchResult] = useState(
-    () => getGameState().matchResult ?? null,
-  );
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
+  const [matchResult, setMatchResult] = useState(() => getGameState().matchResult ?? null);
 
   useEffect(() => {
     void getProfile().then((r) => setCurrentUserId(r.user.id));
@@ -27,10 +29,7 @@ export function FinishWinPage() {
       : 0;
 
   const displayAmount = useCountUp(myPayout, 800, true);
-  const amountText =
-    myPayout >= 0
-      ? `+${displayAmount.toFixed(2)} ${currency}`
-      : `${displayAmount.toFixed(2)} ${currency}`;
+  const amountText = myPayout >= 0 ? `+${displayAmount.toFixed(2)} ${currency}` : `${displayAmount.toFixed(2)} ${currency}`;
 
   return (
     <section className="screen finish-screen finish-screen--blur">
@@ -60,17 +59,11 @@ export function FinishWinPage() {
         animate={{ opacity: 1, scale: 1 }}
         transition={{ type: "spring", stiffness: 300, damping: 24 }}
       >
-        <div className="result-card__title">Игра завершена!</div>
-        <div className="result-card__message">Победа</div>
-        <div className="result-card__amount result-card__amount--plus">
-          {amountText}
-        </div>
-        <Link
-          className="button button--primary"
-          to="/play"
-          onClick={() => hapticNotification("success")}
-        >
-          Продолжить
+        <div className="result-card__title">{tr("Игра завершена!", "Гру завершено!")}</div>
+        <div className="result-card__message">{tr("Победа", "Перемога")}</div>
+        <div className="result-card__amount result-card__amount--plus">{amountText}</div>
+        <Link className="button button--primary" to="/play" onClick={() => hapticNotification("success")}>
+          {tr("Продолжить", "Продовжити")}
         </Link>
       </motion.div>
     </section>

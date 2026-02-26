@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getConfig } from "@/shared/api/config";
 import { getProfile } from "@/shared/api/user";
 import { createWithdraw } from "@/shared/api/withdraw";
 import { HttpError } from "@/shared/api/http";
 import { bootstrapTelegramAuth, clearTokens } from "@/shared/api/auth";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, CryptoBotIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
 import { openTelegramLink } from "@/shared/lib/telegram";
@@ -12,9 +13,11 @@ import { openTelegramLink } from "@/shared/lib/telegram";
 const DEFAULT_CRYPTO_BOT = "CryptoBot";
 const MIN_AMOUNT = 5;
 
-/** Страница вывода: ввод суммы и отправка через Crypto Pay transfer API. */
 export function WithdrawPage() {
   const navigate = useNavigate();
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [cryptoBotUsername, setCryptoBotUsername] = useState(DEFAULT_CRYPTO_BOT);
   const [balance, setBalance] = useState<number | null>(null);
   const [amountInput, setAmountInput] = useState("");
@@ -24,13 +27,12 @@ export function WithdrawPage() {
   const amount = parseFloat(amountInput.replace(",", ".")) || 0;
   const maxAvailable = balance != null ? Math.max(0, balance) : null;
   const exceedsBalance = maxAvailable != null && amount > maxAvailable;
-  const belowMin = amount > 0 && amount < MIN_AMOUNT;
   const canSubmit = amount >= MIN_AMOUNT && !exceedsBalance && !loading;
 
   useEffect(() => {
     getConfig()
       .then((cfg) => setCryptoBotUsername(cfg.cryptoBotUsername ?? DEFAULT_CRYPTO_BOT))
-      .catch(() => {});
+      .catch(() => undefined);
     getProfile()
       .then((r) => setBalance(r.balance))
       .catch(() => setBalance(0));
@@ -54,7 +56,7 @@ export function WithdrawPage() {
           navigate("/profile");
           return;
         } catch {
-          /* fall through */
+          // fall through
         }
       }
       const msg =
@@ -63,7 +65,7 @@ export function WithdrawPage() {
           : err instanceof Error
             ? err.message
             : String(err);
-      setError(msg || "Не удалось выполнить вывод. Попробуйте позже.");
+      setError(msg || tr("Не удалось выполнить вывод. Попробуйте позже.", "Не вдалося виконати виведення. Спробуйте пізніше."));
     } finally {
       setLoading(false);
     }
@@ -72,10 +74,10 @@ export function WithdrawPage() {
   return (
     <section className="screen withdraw-page">
       <div className="page-header">
-        <Link className="icon-button" to="/profile" aria-label="Назад">
+        <Link className="icon-button" to="/profile" aria-label={tr("Назад", "Назад")}>
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Вывод</h1>
+        <h1 className="page-header__title">{tr("Вывод", "Виведення")}</h1>
         <div className="page-header__spacer" />
       </div>
 
@@ -86,15 +88,16 @@ export function WithdrawPage() {
           </div>
           <div className="withdraw-method__text">
             <span className="withdraw-method__name">Crypto Bot</span>
-            <span className="withdraw-method__desc">Вывод через @{cryptoBotUsername}</span>
+            <span className="withdraw-method__desc">{tr("Вывод через", "Виведення через")} @{cryptoBotUsername}</span>
           </div>
         </div>
         <p className="withdraw-hint">
-          После отправки заявки администратору приходит уведомление о выводе. Сумма указывается в USD, выплата в
-          USDT через @{cryptoBotUsername}. При необходимости администратор свяжется с вами в Telegram и подтвердит
-          вывод.
+          {tr(
+            `После отправки заявки администратору приходит уведомление о выводе. Сумма указывается в USD, выплата в USDT через @${cryptoBotUsername}. При необходимости администратор свяжется с вами в Telegram и подтвердит вывод.`,
+            `Після відправлення заявки адміністратор отримує сповіщення про виведення. Сума вказується в USD, виплата в USDT через @${cryptoBotUsername}. За потреби адміністратор зв'яжеться з вами в Telegram і підтвердить виведення.`,
+          )}
         </p>
-        <p className="withdraw-label">Сумма вывода (USD)</p>
+        <p className="withdraw-label">{tr("Сумма вывода (USD)", "Сума виведення (USD)")}</p>
         <input
           type="number"
           inputMode="decimal"
@@ -109,11 +112,14 @@ export function WithdrawPage() {
         {maxAvailable != null && (
           <p id="withdraw-max-hint" className={`withdraw-max ${exceedsBalance ? "withdraw-max--error" : ""}`}>
             {exceedsBalance
-              ? `Максимально доступная сумма для вывода: ${maxAvailable.toFixed(2)} USD`
-              : `Доступно: ${maxAvailable.toFixed(2)} USD`}
+              ? tr(
+                  `Максимально доступная сумма для вывода: ${maxAvailable.toFixed(2)} USD`,
+                  `Максимально доступна сума для виведення: ${maxAvailable.toFixed(2)} USD`,
+                )
+              : tr(`Доступно: ${maxAvailable.toFixed(2)} USD`, `Доступно: ${maxAvailable.toFixed(2)} USD`)}
           </p>
         )}
-        <p className="withdraw-min">Минимум: 5 USD (требование Crypto Pay)</p>
+        <p className="withdraw-min">{tr("Минимум: 5 USD (требование Crypto Pay)", "Мінімум: 5 USD (вимога Crypto Pay)")}</p>
         {error && (
           <>
             <p className="withdraw-error">{error}</p>
@@ -123,7 +129,7 @@ export function WithdrawPage() {
                 className="withdraw-open-bot"
                 onClick={() => openTelegramLink("https://t.me/CryptoTestnetBot")}
               >
-                Открыть @CryptoTestnetBot
+                {tr("Открыть", "Відкрити")} @CryptoTestnetBot
               </button>
             )}
           </>
@@ -134,7 +140,11 @@ export function WithdrawPage() {
           onClick={handleWithdraw}
           disabled={!canSubmit}
         >
-          {loading ? "Обработка..." : amount > 0 ? `Вывести $${amount.toFixed(2)}` : "Вывести"}
+          {loading
+            ? tr("Обработка...", "Обробка...")
+            : amount > 0
+              ? tr(`Вывести $${amount.toFixed(2)}`, `Вивести $${amount.toFixed(2)}`)
+              : tr("Вывести", "Вивести")}
         </button>
       </AppCard>
 

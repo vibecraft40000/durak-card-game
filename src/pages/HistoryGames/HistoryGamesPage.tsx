@@ -1,51 +1,83 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { getHistory, type HistoryItem } from "@/shared/api/history";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 
-const HISTORY_ROWS = [
-  { id: "1", stake: 500, players: "4p", deck: 24, status: "win", delta: "+250" },
-  { id: "2", stake: 300, players: "3p", deck: 36, status: "lose", delta: "-150" },
-  { id: "3", stake: 100, players: "2p", deck: 52, status: "win", delta: "+47" },
-];
-
 export function HistoryGamesPage() {
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+  const [items, setItems] = useState<HistoryItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadHistory();
+  }, []);
+
+  async function loadHistory() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await getHistory({ limit: 50 });
+      setItems(response.items);
+    } catch {
+      setError(tr("Не удалось загрузить историю игр.", "Не вдалося завантажити історію ігор."));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   return (
     <section className="screen settings-screen">
       <div className="page-header">
         <Link className="icon-button" to="/profile">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">РСЃС‚РѕСЂРёСЏ РёРіСЂ</h1>
+        <h1 className="page-header__title">{tr("История игр", "Історія ігор")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <div className="action-list action-list--inline">
         <Link className="button" to="/profile/history/date">
-          РџРѕ РґР°С‚Рµ
+          {tr("По дате", "За датою")}
         </Link>
         <Link className="button" to="/profile/history/calendar">
-          РљР°Р»РµРЅРґР°СЂСЊ
+          {tr("Календарь", "Календар")}
         </Link>
         <Link className="button" to="/play">
-          РРіСЂР°С‚СЊ
+          {tr("Играть", "Грати")}
         </Link>
       </div>
 
       <div className="list">
-        {HISTORY_ROWS.map((row) => (
-          <article className="card" key={row.id}>
-            <div className="card__row">
-              <strong>${row.stake}</strong>
-              <span>{row.players}</span>
-            </div>
-            <div className="card__hint">
-              {row.deck} РєР°СЂС‚ В· {row.status === "win" ? "РџРѕР±РµРґР°" : "РџРѕСЂР°Р¶РµРЅРёРµ"}
-            </div>
-            <div className="card__row">
-              <span>Р РµР·СѓР»СЊС‚Р°С‚</span>
-              <strong>{row.delta}</strong>
-            </div>
-          </article>
-        ))}
+        {isLoading && <div className="card__hint">{tr("Загрузка...", "Завантаження...")}</div>}
+        {error && <div className="card__hint card__hint--error">{error}</div>}
+        {!isLoading && !error && items.length === 0 && (
+          <div className="card__hint">{tr("Записей пока нет.", "Записів поки немає.")}</div>
+        )}
+        {!isLoading &&
+          !error &&
+          items.map((item) => {
+            const delta = `${item.profit >= 0 ? "+" : ""}${item.profit.toFixed(2)}`;
+            const createdAt = new Date(item.createdAt).toLocaleString(language === "uk" ? "uk-UA" : "ru-RU");
+            return (
+              <article className="card" key={`${item.matchId}-${item.createdAt}`}>
+                <div className="card__row">
+                  <strong>${item.stake.toFixed(2)}</strong>
+                  <span>{item.matchId.slice(0, 8)}</span>
+                </div>
+                <div className="card__hint">
+                  {item.result === "win" ? tr("Победа", "Перемога") : tr("Поражение", "Поразка")}
+                </div>
+                <div className="card__row">
+                  <span>{tr("Результат", "Результат")}</span>
+                  <strong>{delta}</strong>
+                </div>
+                <div className="card__hint">{createdAt}</div>
+              </article>
+            );
+          })}
       </div>
     </section>
   );

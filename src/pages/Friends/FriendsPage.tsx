@@ -1,24 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getFriends, removeFriend, type FriendEntry } from "@/shared/api/friends";
 import { getProfile } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, TrashIcon, UsersIcon } from "@/shared/ui/Icons";
 import { ConfirmModal } from "@/shared/ui/StateBlocks";
 
-function friendName(friend: FriendEntry) {
+function friendName(friend: FriendEntry, fallback: string) {
   const profile = friend.friend;
   if (!profile) {
-    return "Игрок";
+    return fallback;
   }
   return (
     profile.display_name ||
     (profile.username ? `@${profile.username}` : [profile.first_name, profile.last_name].filter(Boolean).join(" ")) ||
-    "Игрок"
+    fallback
   );
 }
 
-function friendAvatarLetter(friend: FriendEntry) {
-  const label = friendName(friend);
+function friendAvatarLetter(label: string) {
   return label.slice(0, 1).toUpperCase();
 }
 
@@ -27,6 +27,9 @@ function otherUserId(friend: FriendEntry) {
 }
 
 export function FriendsPage() {
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [selectedFriendId, setSelectedFriendId] = useState("");
   const [friendToDelete, setFriendToDelete] = useState<string | null>(null);
@@ -56,7 +59,7 @@ export function FriendsPage() {
         setSelectedFriendId(otherUserId(list[0]));
       }
     } catch {
-      setError("Не удалось загрузить друзей.");
+      setError(tr("Не удалось загрузить друзей.", "Не вдалося завантажити друзів."));
     } finally {
       setIsLoading(false);
     }
@@ -73,43 +76,39 @@ export function FriendsPage() {
         <Link className="icon-button" to="/profile">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Друзья</h1>
+        <h1 className="page-header__title">{tr("Друзья", "Друзі")}</h1>
         <Link className="icon-button" to="/profile/friends/add">
           <UsersIcon size={17} />
         </Link>
       </div>
 
-      {isLoading && <div className="card__hint">Загрузка друзей...</div>}
+      {isLoading && <div className="card__hint">{tr("Загрузка друзей...", "Завантаження друзів...")}</div>}
       {error && <div className="card__hint card__hint--error">{error}</div>}
 
       {!isLoading && !error && (
         <div className="list">
-          {friends.length === 0 && <div className="card__hint">Список друзей пуст.</div>}
+          {friends.length === 0 && <div className="card__hint">{tr("Список друзей пуст.", "Список друзів порожній.")}</div>}
           {friends.map((friend) => {
             const id = otherUserId(friend);
             const isSelected = selectedFriendId === id;
-            const name = friendName(friend);
-            const isAccepted = friend.status === "accepted";
+            const name = friendName(friend, tr("Игрок", "Гравець"));
+            const isOnline = Boolean(friend.isOnline);
 
             return (
               <div className="friend-row-wrap" key={friend.id}>
                 <button
-                  className={`friend-row ${isAccepted ? "friend-row--online" : ""} ${
+                  className={`friend-row ${isOnline ? "friend-row--online" : ""} ${
                     isSelected ? "friend-row--selected" : ""
                   }`}
                   type="button"
                   onClick={() => setSelectedFriendId(id)}
                 >
-                  <div className="friend-row__avatar">{friendAvatarLetter(friend)}</div>
+                  <div className="friend-row__avatar">{friendAvatarLetter(name)}</div>
                   <span>{name}</span>
-                  {isAccepted && <span className="friend-row__dot" />}
+                  <span className={`friend-row__dot ${isOnline ? "friend-row__dot--online" : "friend-row__dot--offline"}`} />
                 </button>
                 {isSelected && (
-                  <button
-                    className="friend-row__delete"
-                    type="button"
-                    onClick={() => setFriendToDelete(id)}
-                  >
+                  <button className="friend-row__delete" type="button" onClick={() => setFriendToDelete(id)}>
                     <TrashIcon size={18} />
                   </button>
                 )}
@@ -120,16 +119,16 @@ export function FriendsPage() {
       )}
 
       <div className="card card--compact">
-        <div className="card__label">Реферальная ссылка</div>
+        <div className="card__label">{tr("Реферальная ссылка", "Реферальне посилання")}</div>
         <div className="card__hint card__hint--mono">{refLink}</div>
       </div>
 
       <ConfirmModal
         isOpen={Boolean(friendToDelete)}
-        title="Удалить друга?"
-        message="Вы уверены, что хотите удалить пользователя из друзей?"
-        confirmLabel={isRemoving ? "Удаление..." : "Да"}
-        cancelLabel="Нет"
+        title={tr("Удалить друга?", "Видалити друга?")}
+        message={tr("Вы уверены, что хотите удалить пользователя из друзей?", "Ви впевнені, що хочете видалити користувача з друзів?")}
+        confirmLabel={isRemoving ? tr("Удаление...", "Видалення...") : tr("Да", "Так")}
+        cancelLabel={tr("Нет", "Ні")}
         onConfirm={() => {
           if (!friendToDelete || isRemoving) {
             return;
@@ -143,7 +142,7 @@ export function FriendsPage() {
               }
             })
             .catch(() => {
-              setError("Не удалось удалить друга.");
+              setError(tr("Не удалось удалить друга.", "Не вдалося видалити друга."));
             })
             .finally(() => {
               setIsRemoving(false);

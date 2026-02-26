@@ -14,6 +14,7 @@ export type FriendEntry = {
   userId: string;
   friendId: string;
   status: "pending" | "accepted" | "blocked";
+  isOnline?: boolean;
   createdAt: string;
   friend?: FriendUser;
 };

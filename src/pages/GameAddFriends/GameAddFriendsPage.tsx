@@ -1,5 +1,6 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
@@ -9,11 +10,14 @@ const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_
 
 export function GameAddFriendsPage() {
   const { id } = useParams<{ id: string }>();
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [copied, setCopied] = useState(false);
   const shareUrl = `https://t.me/${BOT_USERNAME}?start=room_${id ?? "unknown"}`;
 
   async function handleShare() {
-    const text = `Присоединяйся к игре в дурака!`;
+    const text = tr("Присоединяйся к игре в дурака!", "Приєднуйся до гри в дурня!");
     if (navigator.share) {
       try {
         await navigator.share({ title: "Дурак Онлайн", text, url: shareUrl });
@@ -38,17 +42,17 @@ export function GameAddFriendsPage() {
         <Link className="icon-button" to={`/game/${id}`}>
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Пригласить друзей</h1>
+        <h1 className="page-header__title">{tr("Пригласить друзей", "Запросити друзів")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <AppCard>
-        <div className="card__label">Ссылка для приглашения</div>
+        <div className="card__label">{tr("Ссылка для приглашения", "Посилання для запрошення")}</div>
         <label className="field">
           <input value={shareUrl} readOnly />
         </label>
         <AppButton variant="primary" type="button" onClick={() => void handleShare()}>
-          {copied ? "Скопировано!" : "Поделиться"}
+          {copied ? tr("Скопировано!", "Скопійовано!") : tr("Поделиться", "Поділитися")}
         </AppButton>
       </AppCard>
     </section>

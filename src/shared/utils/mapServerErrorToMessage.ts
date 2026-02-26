@@ -1,3 +1,5 @@
+import { trRuntime } from "@/shared/i18n/runtime";
+
 export type ServerErrorLike = {
   code?: string;
   reason?: string;
@@ -6,7 +8,7 @@ export type ServerErrorLike = {
 
 export function mapServerErrorToMessage(err?: ServerErrorLike): { text: string; code?: string } {
   if (!err) {
-    return { text: "Неизвестная ошибка сервера" };
+    return { text: trRuntime("Неизвестная ошибка сервера", "Невідома помилка сервера") };
   }
 
   const code = err.code || err.reason || (err as any).type;
@@ -14,35 +16,34 @@ export function mapServerErrorToMessage(err?: ServerErrorLike): { text: string; 
   switch (code) {
     case "expectedVersion":
       return {
-        text: "Состояние устарело. Обновите состояние комнаты.",
+        text: trRuntime("Состояние устарело. Обновите состояние комнаты.", "Стан застарів. Оновіть стан кімнати."),
         code: "expectedVersion",
       };
     case "kicked":
       return {
-        text: "Вы были исключены из комнаты.",
+        text: trRuntime("Вы были исключены из комнаты.", "Вас було виключено з кімнати."),
         code: "kicked",
       };
     case "notAllowed":
     case "forbidden":
       return {
-        text: "Действие запрещено сервером.",
+        text: trRuntime("Действие запрещено сервером.", "Дію заборонено сервером."),
         code: "notAllowed",
       };
     case "insufficientFunds":
       return {
-        text: "Недостаточно средств.",
+        text: trRuntime("Недостаточно средств.", "Недостатньо коштів."),
         code: "insufficientFunds",
       };
     case "internalError":
       return {
-        text: "Внутренняя ошибка сервера, попробуйте позже.",
+        text: trRuntime("Внутренняя ошибка сервера, попробуйте позже.", "Внутрішня помилка сервера, спробуйте пізніше."),
         code: "internalError",
       };
     default:
       return {
-        text: err.message || "Ошибка сервера.",
+        text: err.message || trRuntime("Ошибка сервера.", "Помилка сервера."),
         code,
       };
   }
 }
-

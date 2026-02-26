@@ -1,3 +1,4 @@
+﻿import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { type Theme } from "@/shared/lib/theme";
 import { MoonIcon, SunIcon } from "@/shared/ui/Icons";
 
@@ -8,6 +9,8 @@ type ThemeToggleProps = {
 };
 
 export function ThemeToggle({ theme, onToggle, className }: ThemeToggleProps) {
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
   const isLight = theme === "light";
 
   return (
@@ -15,8 +18,12 @@ export function ThemeToggle({ theme, onToggle, className }: ThemeToggleProps) {
       type="button"
       onClick={onToggle}
       className={`theme-toggle ${isLight ? "theme-toggle--light" : "theme-toggle--dark"} ${className ?? ""}`}
-      title={isLight ? "Тёмная тема" : "Светлая тема"}
-      aria-label={isLight ? "Переключить на тёмную тему" : "Переключить на светлую тему"}
+      title={isLight ? tr("Тёмная тема", "Темна тема") : tr("Светлая тема", "Світла тема")}
+      aria-label={
+        isLight
+          ? tr("Переключить на тёмную тему", "Перемкнути на темну тему")
+          : tr("Переключить на светлую тему", "Перемкнути на світлу тему")
+      }
     >
       <span className="theme-toggle__track" />
       <span className="theme-toggle__icon theme-toggle__icon--sun">

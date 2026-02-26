@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+﻿import type { ReactNode } from "react";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 
 type StateBlockProps = {
   title: string;
@@ -65,11 +66,14 @@ export function ConfirmModal({
   title,
   message,
   confirmLabel,
-  cancelLabel = "Отмена",
+  cancelLabel,
   onConfirm,
   onCancel,
   footerExtra,
 }: ModalProps) {
+  const { language } = useLanguage();
+  const defaultCancelLabel = language === "uk" ? "Скасувати" : "Отмена";
+
   if (!isOpen) {
     return null;
   }
@@ -82,7 +86,7 @@ export function ConfirmModal({
         {footerExtra}
         <div className="modal__actions">
           <button className="button" type="button" onClick={onCancel}>
-            {cancelLabel}
+            {cancelLabel ?? defaultCancelLabel}
           </button>
           <button className="button button--primary" type="button" onClick={onConfirm}>
             {confirmLabel}

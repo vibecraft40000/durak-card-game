@@ -1,4 +1,5 @@
 import type { MatchStatePayload } from "@/shared/api/ws/types";
+import { trRuntime } from "@/shared/i18n/runtime";
 
 export type ActivityMoveItem = {
   type: "move";
@@ -92,7 +93,7 @@ export function setGameReady() {
 export function setGameError(message: string) {
   const item: ActivitySystemItem = {
     type: "system",
-    message: `Ошибка: ${message}`,
+    message: `${trRuntime("Ошибка", "Помилка")}: ${message}`,
     timestamp: Date.now(),
   };
   update({

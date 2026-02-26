@@ -1,17 +1,21 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { acceptFriendRequest, getFriendRequests, sendFriendRequest, type FriendEntry } from "@/shared/api/friends";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 
-function requesterLabel(item: FriendEntry) {
+function requesterLabel(item: FriendEntry, fallback: string) {
   const profile = item.friend;
   if (!profile) {
     return item.userId;
   }
-  return profile.display_name || (profile.username ? `@${profile.username}` : profile.first_name || item.userId);
+  return profile.display_name || (profile.username ? `@${profile.username}` : profile.first_name || fallback);
 }
 
 export function FriendsAddPage() {
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [friendId, setFriendId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,10 +50,10 @@ export function FriendsAddPage() {
     setIsSubmitting(true);
     try {
       await sendFriendRequest(trimmed);
-      setSuccess("Запрос отправлен.");
+      setSuccess(tr("Запрос отправлен.", "Запит надіслано."));
       setFriendId("");
     } catch {
-      setError("Не удалось отправить запрос в друзья.");
+      setError(tr("Не удалось отправить запрос в друзья.", "Не вдалося надіслати запит у друзі."));
     } finally {
       setIsSubmitting(false);
     }
@@ -74,39 +78,42 @@ export function FriendsAddPage() {
         <Link className="icon-button" to="/profile/friends">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Добавить друга</h1>
+        <h1 className="page-header__title">{tr("Добавить друга", "Додати друга")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <div className="card form-grid">
-        <div className="card__hint">Введите username (@name) или user id</div>
-        <input
-          value={friendId}
-          onChange={(event) => setFriendId(event.target.value)}
-          placeholder="@username"
-        />
+        <div className="card__hint">{tr("Введите username (@name) или user id", "Введіть username (@name) або user id")}</div>
+        <input value={friendId} onChange={(event) => setFriendId(event.target.value)} placeholder="@username" />
         {error && <div className="card__hint card__hint--error">{error}</div>}
         {success && <div className="card__hint">{success}</div>}
-        <button className="button button--primary" type="button" onClick={() => void handleSendRequest()} disabled={isSubmitting}>
-          {isSubmitting ? "Отправка..." : "Отправить запрос"}
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void handleSendRequest()}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? tr("Отправка...", "Надсилання...") : tr("Отправить запрос", "Надіслати запит")}
         </button>
       </div>
 
       <div className="card form-grid">
-        <div className="card__label">Входящие заявки</div>
-        {isLoadingRequests && <div className="card__hint">Загрузка...</div>}
-        {!isLoadingRequests && requests.length === 0 && <div className="card__hint">Новых заявок нет.</div>}
+        <div className="card__label">{tr("Входящие заявки", "Вхідні запити")}</div>
+        {isLoadingRequests && <div className="card__hint">{tr("Загрузка...", "Завантаження...")}</div>}
+        {!isLoadingRequests && requests.length === 0 && (
+          <div className="card__hint">{tr("Новых заявок нет.", "Нових запитів немає.")}</div>
+        )}
         {!isLoadingRequests &&
           requests.map((item) => (
             <div className="card__row" key={item.id}>
-              <span>{requesterLabel(item)}</span>
+              <span>{requesterLabel(item, tr("Игрок", "Гравець"))}</span>
               <button
                 type="button"
                 className="button"
                 disabled={acceptingRequestId !== null}
                 onClick={() => void handleAccept(item.userId)}
               >
-                {acceptingRequestId === item.userId ? "..." : "Принять"}
+                {acceptingRequestId === item.userId ? "..." : tr("Принять", "Прийняти")}
               </button>
             </div>
           ))}

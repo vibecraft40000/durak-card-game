@@ -13,11 +13,11 @@ type Type string
 type Status string
 
 const (
-	TypeDeposit    Type = "deposit"
-	TypeWithdraw   Type = "withdraw"
-	TypeBetHold    Type = "bet_hold"
-	TypeWin        Type = "win"
-	TypeCommission Type = "commission"
+	TypeDeposit     Type = "deposit"
+	TypeWithdraw    Type = "withdraw"
+	TypeBetHold     Type = "bet_hold"
+	TypeWin         Type = "win"
+	TypeCommission  Type = "commission"
 	TypeAdminAdjust Type = "admin_adjust"
 
 	StatusPending   Status = "pending"
@@ -91,6 +91,63 @@ func (r *Repository) Balance(ctx context.Context, userID string) (float64, error
 	}
 	metrics.ObserveDBQuery("select_balance", start)
 	return total, nil
+}
+
+type UserTransactionItem struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Amount    float64   `json:"amount"`
+	Status    string    `json:"status"`
+	MatchID   string    `json:"match_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (r *Repository) ListByUser(ctx context.Context, userID string, limit, offset int) ([]UserTransactionItem, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	query := `
+SELECT
+    id::text,
+    type::text,
+    amount::float8,
+    status::text,
+    COALESCE(match_id::text, ''),
+    created_at
+FROM transactions
+WHERE user_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3`
+	start := time.Now()
+	rows, err := r.db.Query(ctx, query, userID, limit, offset)
+	metrics.ObserveDBQuery("transactions_list_user", start)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]UserTransactionItem, 0, limit)
+	for rows.Next() {
+		var item UserTransactionItem
+		if err := rows.Scan(
+			&item.ID,
+			&item.Type,
+			&item.Amount,
+			&item.Status,
+			&item.MatchID,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) SeedDeposit(userID string, amount float64) {
@@ -180,13 +237,13 @@ func nullIfEmpty(value string) any {
 }
 
 type AdminAuditLog struct {
-	ID           string     `json:"id"`
-	Actor        string     `json:"actor"`
-	Action       string     `json:"action"`
-	TargetUserID string     `json:"target_user_id"`
-	Amount       *float64   `json:"amount,omitempty"`
-	Reason       string     `json:"reason"`
-	CreatedAt    time.Time  `json:"created_at"`
+	ID           string    `json:"id"`
+	Actor        string    `json:"actor"`
+	Action       string    `json:"action"`
+	TargetUserID string    `json:"target_user_id"`
+	Amount       *float64  `json:"amount,omitempty"`
+	Reason       string    `json:"reason"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (r *Repository) AddAdminAudit(ctx context.Context, actor, action, targetUserID string, amount *float64, reason string) error {

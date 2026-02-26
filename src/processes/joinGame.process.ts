@@ -2,6 +2,7 @@ import { initializeMockMatch, isMockApiEnabled } from "@/mocks/mockApi";
 import { httpRequest } from "@/shared/api/http";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { setConnectionHandler, wsClient } from "@/shared/api/ws/socket";
+import { trRuntime } from "@/shared/i18n/runtime";
 import {
   addActivity,
   addActivityItem,
@@ -28,13 +29,13 @@ export async function joinGameRoom(roomId: string) {
       method: "POST",
     });
   } catch {
-    setGameError("Не удалось войти в комнату");
+    setGameError(trRuntime("Не удалось войти в комнату", "Не вдалося увійти в кімнату"));
     return () => undefined;
   }
 
   if (isMockApiEnabled()) {
     setGameReady();
-    addActivity(`Mock: вход в комнату ${roomId}`);
+    addActivity(trRuntime(`Mock: вход в комнату ${roomId}`, `Mock: вхід у кімнату ${roomId}`));
     setMatchState(initializeMockMatch(roomId));
     return () => undefined;
   }
@@ -46,7 +47,7 @@ export async function joinGameRoom(roomId: string) {
 
   const offRoom = onWsEvent("room_update", () => {
     setGameReady();
-    addActivity(`Подключение к комнате ${roomId}`);
+    addActivity(trRuntime(`Подключение к комнате ${roomId}`, `Підключення до кімнати ${roomId}`));
   });
 
   let lastGameStateAt = Date.now();
@@ -88,7 +89,7 @@ export async function joinGameRoom(roomId: string) {
   });
 
   const offTimer = onWsEvent("timer_update", ({ payload }) => {
-    addActivity(`Таймер обновлен: ${payload.turnPlayerId}`);
+    addActivity(trRuntime(`Таймер обновлен: ${payload.turnPlayerId}`, `Таймер оновлено: ${payload.turnPlayerId}`));
   });
 
   const offFinished = onWsEvent("match_finished", ({ payload }) => {
@@ -99,8 +100,11 @@ export async function joinGameRoom(roomId: string) {
     setMatchFinishedAbandoned(Boolean(payload.abandoned));
     addActivity(
       payload.abandoned
-        ? "Соперник не вернулся. Победа."
-        : `Матч завершен. Победитель: ${payload.winnerPlayerId}`,
+        ? trRuntime("Соперник не вернулся. Победа.", "Суперник не повернувся. Перемога.")
+        : trRuntime(
+            `Матч завершен. Победитель: ${payload.winnerPlayerId}`,
+            `Матч завершено. Переможець: ${payload.winnerPlayerId}`,
+          ),
     );
 
     if (payload.payouts && payload.payouts.length > 0) {
@@ -121,7 +125,7 @@ export async function joinGameRoom(roomId: string) {
     if (payload?.errorCode === "VERSION_MISMATCH") {
       return; // Handled by version_mismatch, no error UI
     }
-    setGameError(payload?.message ?? "Ошибка");
+    setGameError(payload?.message ?? trRuntime("Ошибка", "Помилка"));
   });
 
   const offVersionMismatch = onWsEvent("version_mismatch", ({ payload }) => {
@@ -156,14 +160,14 @@ export async function joinGameRoom(roomId: string) {
   const offDisconnected = onWsEvent("player_disconnected", ({ payload }) => {
     if (payload?.roomId === roomId && payload?.playerId) {
       setReconnectingPlayer(payload.playerId);
-      addActivity("Соперник отключился. Ожидание 60 сек...");
+      addActivity(trRuntime("Соперник отключился. Ожидание 60 сек...", "Суперник відключився. Очікування 60 сек..."));
     }
   });
 
   const offReconnected = onWsEvent("player_reconnected", ({ payload }) => {
     if (payload?.roomId === roomId && payload?.playerId) {
       setReconnectingPlayer(null);
-      addActivity("Соперник переподключился.");
+      addActivity(trRuntime("Соперник переподключился.", "Суперник перепідключився."));
     }
   });
 

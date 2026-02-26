@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { subscribeSocketStore } from "@/store/socket.store";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 
 export function ReconnectOverlay() {
+  const { language } = useLanguage();
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
@@ -11,14 +13,10 @@ export function ReconnectOverlay() {
   if (!isReconnecting) return null;
 
   return (
-    <div
-      className="reconnect-overlay"
-      role="alert"
-      aria-live="polite"
-    >
+    <div className="reconnect-overlay" role="alert" aria-live="polite">
       <div className="reconnect-overlay__content">
         <p className="reconnect-overlay__text">
-          Соединение потеряно… Пытаемся восстановить
+          {language === "uk" ? "З'єднання втрачено… Відновлюємо" : "Соединение потеряно… Пытаемся восстановить"}
         </p>
       </div>
     </div>

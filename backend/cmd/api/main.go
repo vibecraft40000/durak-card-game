@@ -131,12 +131,13 @@ func main() {
 	historyService := history.NewService(historyRepo)
 	historyHandler := history.NewHandler(historyService)
 
-	friendsRepo := friends.NewRepository(postgresPool)
-	friendsService := friends.NewService(friendsRepo, userRepo)
-	friendsHandler := friends.NewHandler(friendsService, userRepo)
-
 	hub := ws.NewHub()
 	bus := ws.NewBus(redisClient, instanceID)
+
+	friendsRepo := friends.NewRepository(postgresPool)
+	friendsService := friends.NewService(friendsRepo, userRepo)
+	friendsHandler := friends.NewHandler(friendsService, userRepo, hub)
+
 	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter, cfg.AllowedOrigin)
 
 	router := chi.NewRouter()
@@ -506,6 +507,21 @@ func main() {
 		protected.Post("/api/payments/create", paymentsHandler.CreatePayment)
 		protected.Get("/api/history", historyHandler.List)
 		protected.Get("/api/history/calendar", historyHandler.Calendar)
+		protected.Get("/api/profile/transactions", func(w http.ResponseWriter, r *http.Request) {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+			items, err := txRepo.ListByUser(r.Context(), user.ID, limit, offset)
+			if err != nil {
+				http.Error(w, "failed to load transactions", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"items": items})
+		})
 		protected.Get("/api/friends", friendsHandler.List)
 		protected.Get("/api/friends/requests", friendsHandler.Requests)
 		protected.Post("/api/friends/request", friendsHandler.Request)

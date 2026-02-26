@@ -3,105 +3,122 @@ import { Link, useNavigate } from "react-router-dom";
 import { createDepositInvoice } from "@/shared/api/deposit";
 import { createPayment } from "@/shared/api/payments";
 import { bootstrapTelegramAuth, clearTokens } from "@/shared/api/auth";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { openTelegramLink } from "@/shared/lib/telegram";
-import { BackIcon, CryptoBotIcon, ChevronRightIcon } from "@/shared/ui/Icons";
+import { BackIcon, CryptoBotIcon, DepositIcon, ChevronRightIcon } from "@/shared/ui/Icons";
 
 const AMOUNTS = [5, 10, 25, 50] as const;
 
 type DepositStep = "method" | "amount";
+type DepositMethod = "crypto" | "card";
 
 export function DepositPage() {
   const navigate = useNavigate();
+  const { language } = useLanguage();
+  const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [step, setStep] = useState<DepositStep>("method");
+  const [method, setMethod] = useState<DepositMethod>("crypto");
   const [amount, setAmount] = useState<number>(10);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleChooseCryptoBot() {
+  function selectMethod(next: DepositMethod) {
+    setMethod(next);
     setError(null);
     setStep("amount");
+  }
+
+  async function createCryptoPayment() {
+    const { invoiceUrl } = await createDepositInvoice(amount);
+    openTelegramLink(invoiceUrl);
+    navigate("/profile");
+  }
+
+  async function createCardPayment() {
+    const res = await createPayment(amount);
+    openTelegramLink(res.directPayLink);
+    navigate("/profile");
   }
 
   async function handleContinue() {
     if (loading) return;
     setLoading(true);
     setError(null);
+
+    const runSelectedMethod = async () => {
+      if (method === "crypto") {
+        await createCryptoPayment();
+      } else {
+        await createCardPayment();
+      }
+    };
+
     try {
-      const { invoiceUrl } = await createDepositInvoice(amount);
-      openTelegramLink(invoiceUrl);
-      navigate("/profile");
+      await runSelectedMethod();
       return;
-    } catch (cryptoErr: unknown) {
-      const cryptoStatus = (cryptoErr as { status?: number })?.status;
-      if (cryptoStatus === 401) {
+    } catch (firstErr: unknown) {
+      const status = (firstErr as { status?: number })?.status;
+      if (status === 401) {
         clearTokens();
         try {
           await bootstrapTelegramAuth();
-          const { invoiceUrl } = await createDepositInvoice(amount);
-          openTelegramLink(invoiceUrl);
-          navigate("/profile");
+          await runSelectedMethod();
           return;
         } catch {
-          /* fall through */
+          // ignore and show fallback text below
         }
       }
-      try {
-        const res = await createPayment(amount);
-        openTelegramLink(res.directPayLink);
-        navigate("/profile");
-        return;
-      } catch (walletErr: unknown) {
-        const walletStatus = (walletErr as { status?: number })?.status;
-        if (walletStatus === 401) {
-          clearTokens();
-          try {
-            await bootstrapTelegramAuth();
-            const res = await createPayment(amount);
-            openTelegramLink(res.directPayLink);
-            navigate("/profile");
-            return;
-          } catch {
-            /* fall through */
-          }
-        }
-        const cryptoMsg = cryptoErr instanceof Error ? (cryptoErr as Error).message : String(cryptoErr);
-        const walletMsg = walletErr instanceof Error ? (walletErr as Error).message : String(walletErr);
-        const hint =
-          cryptoStatus === 401 || walletStatus === 401
-            ? "РћС€РёР±РєР° Р°РІС‚РѕСЂРёР·Р°С†РёРё. РћС‚РєСЂРѕР№С‚Рµ РїСЂРёР»РѕР¶РµРЅРёРµ Р·Р°РЅРѕРІРѕ РёР· Telegram."
-            : cryptoMsg || walletMsg || "РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ РїР»Р°С‚С‘Р¶. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ РёР»Рё РїРѕРїСЂРѕР±СѓР№С‚Рµ РїРѕР·Р¶Рµ.";
-        setError(hint);
-      }
+      const message =
+        firstErr instanceof Error
+          ? firstErr.message
+          : String(firstErr ?? "");
+      setError(
+        message ||
+          tr(
+            "Не удалось создать платёж. Проверьте подключение или попробуйте позже.",
+            "Не вдалося створити платіж. Перевірте з'єднання або спробуйте пізніше.",
+          ),
+      );
     } finally {
       setLoading(false);
     }
   }
 
+  const methodTitle = method === "crypto" ? "Crypto Bot" : tr("Банковская карта", "Банківська картка");
+
   return (
     <section className="screen deposit-page">
       <div className="page-header">
-        <Link className="icon-button" to="/profile" aria-label="РќР°Р·Р°Рґ">
+        <Link className="icon-button" to="/profile" aria-label={tr("Назад", "Назад")}>
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">РџРѕРїРѕР»РЅРµРЅРёРµ</h1>
+        <h1 className="page-header__title">{tr("Пополнение", "Поповнення")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       {step === "method" && (
         <div className="deposit-content">
-          <p className="deposit-hint">Р’С‹Р±РµСЂРё РјРµС‚РѕРґ РїРѕРїРѕР»РЅРµРЅРёСЏ</p>
-          <button
-            type="button"
-            className="deposit-method"
-            onClick={handleChooseCryptoBot}
-            aria-label="Crypto Bot"
-          >
+          <p className="deposit-hint">{tr("Выберите метод пополнения", "Оберіть метод поповнення")}</p>
+
+          <button type="button" className="deposit-method" onClick={() => selectMethod("crypto")}>
             <div className="deposit-method__icon">
               <CryptoBotIcon size={40} />
             </div>
             <div className="deposit-method__text">
               <span className="deposit-method__name">Crypto Bot</span>
-              <span className="deposit-method__desc">Telegram-bot</span>
+              <span className="deposit-method__desc">USDT</span>
+            </div>
+            <ChevronRightIcon size={20} />
+          </button>
+
+          <button type="button" className="deposit-method" onClick={() => selectMethod("card")}>
+            <div className="deposit-method__icon">
+              <DepositIcon size={40} />
+            </div>
+            <div className="deposit-method__text">
+              <span className="deposit-method__name">{tr("Банковская карта", "Банківська картка")}</span>
+              <span className="deposit-method__desc">Wallet Pay</span>
             </div>
             <ChevronRightIcon size={20} />
           </button>
@@ -110,10 +127,18 @@ export function DepositPage() {
 
       {step === "amount" && (
         <div className="deposit-content">
-          <button type="button" className="deposit-back" onClick={() => { setError(null); setStep("method"); }}>
-            в†ђ РќР°Р·Р°Рґ
+          <button
+            type="button"
+            className="deposit-back"
+            onClick={() => {
+              setError(null);
+              setStep("method");
+            }}
+          >
+            {`< ${tr("Назад", "Назад")}`}
           </button>
-          <p className="deposit-hint">РЎСѓРјРјР° РїРѕРїРѕР»РЅРµРЅРёСЏ (USD)</p>
+          <p className="deposit-hint">{tr("Метод", "Метод")}: {methodTitle}</p>
+          <p className="deposit-hint">{tr("Сумма пополнения (USD)", "Сума поповнення (USD)")}</p>
           <div className="deposit-amounts">
             {AMOUNTS.map((a) => (
               <button
@@ -126,32 +151,28 @@ export function DepositPage() {
               </button>
             ))}
           </div>
-            <p className="deposit-min">РѕС‚ 1 USD</p>
+          <p className="deposit-min">{tr("от 1 USD", "від 1 USD")}</p>
           {error && <p className="deposit-error">{error}</p>}
-          <button
-            type="button"
-            className="deposit-continue"
-            onClick={handleContinue}
-            disabled={loading}
-          >
-            {loading ? "Р—Р°РіСЂСѓР·РєР°..." : "РџСЂРѕРґРѕР»Р¶РёС‚СЊ"}
+          <button type="button" className="deposit-continue" onClick={handleContinue} disabled={loading}>
+            {loading ? tr("Загрузка...", "Завантаження...") : tr("Продолжить", "Продовжити")}
           </button>
         </div>
       )}
 
       <style>{`
         .deposit-page { padding: var(--space-16); }
-        .deposit-content { margin-top: var(--space-20); }
+        .deposit-content { margin-top: var(--space-20); display: grid; gap: 10px; }
         .deposit-back {
-          margin-bottom: var(--space-16);
+          margin-bottom: var(--space-8);
           border: 0;
           background: none;
           color: var(--color-text-link);
           font-size: var(--font-size-body);
           cursor: pointer;
+          width: fit-content;
         }
         .deposit-hint {
-          margin: 0 0 var(--space-16);
+          margin: 0;
           color: var(--color-text-secondary);
           font-size: var(--font-size-label);
         }
@@ -204,12 +225,12 @@ export function DepositPage() {
           background: var(--color-btn-secondary);
         }
         .deposit-min {
-          margin: 0 0 var(--space-16);
+          margin: 0 0 var(--space-8);
           font-size: var(--font-size-hint);
           color: var(--color-text-secondary);
         }
         .deposit-error {
-          margin: 0 0 var(--space-12);
+          margin: 0;
           font-size: var(--font-size-label);
           color: var(--color-text-error, #e74c3c);
         }

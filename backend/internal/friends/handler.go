@@ -9,12 +9,17 @@ import (
 )
 
 type Handler struct {
-	service *Service
-	users   *users.Repository
+	service  *Service
+	users    *users.Repository
+	presence presenceProvider
 }
 
-func NewHandler(service *Service, users *users.Repository) *Handler {
-	return &Handler{service: service, users: users}
+type presenceProvider interface {
+	IsUserOnline(userID string) bool
+}
+
+func NewHandler(service *Service, users *users.Repository, presence presenceProvider) *Handler {
+	return &Handler{service: service, users: users, presence: presence}
 }
 
 type friendResp struct {
@@ -22,6 +27,7 @@ type friendResp struct {
 	UserID    string      `json:"userId"`
 	FriendID  string      `json:"friendId"`
 	Status    string      `json:"status"`
+	IsOnline  bool        `json:"isOnline"`
 	CreatedAt string      `json:"createdAt"`
 	Friend    *users.User `json:"friend,omitempty"`
 }
@@ -49,11 +55,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[otherID] = struct{}{}
 		other, _ := h.users.GetByID(r.Context(), otherID)
+		isOnline := false
+		if h.presence != nil {
+			isOnline = h.presence.IsUserOnline(otherID)
+		}
 		resp = append(resp, friendResp{
 			ID:        f.ID,
 			UserID:    f.UserID,
 			FriendID:  f.FriendID,
 			Status:    f.Status,
+			IsOnline:  isOnline,
 			CreatedAt: f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			Friend:    &other,
 		})
@@ -126,11 +137,16 @@ func (h *Handler) Requests(w http.ResponseWriter, r *http.Request) {
 	resp := make([]friendResp, 0, len(list))
 	for _, f := range list {
 		requester, _ := h.users.GetByID(r.Context(), f.UserID)
+		isOnline := false
+		if h.presence != nil {
+			isOnline = h.presence.IsUserOnline(f.UserID)
+		}
 		resp = append(resp, friendResp{
 			ID:        f.ID,
 			UserID:    f.UserID,
 			FriendID:  f.FriendID,
 			Status:    f.Status,
+			IsOnline:  isOnline,
 			CreatedAt: f.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			Friend:    &requester,
 		})

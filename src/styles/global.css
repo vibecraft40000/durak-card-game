@@ -1120,27 +1120,63 @@ input[type="range"] {
 .playing-card {
   min-height: var(--card-height);
   min-width: calc(var(--card-width) * 0.75);
-  border: 1px solid var(--color-border-accent);
+  border: 1px solid rgba(17, 24, 39, 0.25);
   border-radius: var(--card-radius);
-  background: linear-gradient(180deg, #f4f6ff 0%, #dfe5ff 100%);
-  color: var(--color-text-primary, #1f2b76);
-  display: grid;
-  align-content: space-between;
-  justify-items: start;
-  padding: var(--space-8);
+  background: linear-gradient(180deg, #ffffff 0%, #f5f5f7 100%);
+  color: #111827;
+  display: block;
+  position: relative;
+  overflow: hidden;
+  padding: 0;
   font-weight: var(--font-weight-bold);
-  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
-  box-shadow: var(--shadow-card-idle, 0 6px 20px rgba(0, 0, 0, 0.35));
+  font-family: "SF Pro Display", "Times New Roman", serif;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out, border-color 0.12s ease-out;
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.2),
+    0 6px 16px rgba(0, 0, 0, 0.28);
 }
 
 .playing-card:hover {
-  transform: translateY(-18px) scale(1.08);
-  box-shadow: var(--shadow-card-hover, 0 12px 32px rgba(0, 0, 0, 0.45));
+  transform: translateY(-10px) scale(1.04);
+  box-shadow:
+    0 2px 3px rgba(0, 0, 0, 0.22),
+    0 12px 28px rgba(0, 0, 0, 0.4);
 }
 
 .playing-card--table {
   min-height: var(--card-table-height);
   min-width: calc(var(--card-table-width) * 0.75);
+}
+
+.playing-card__corner {
+  position: absolute;
+  left: 6px;
+  display: inline-grid;
+  justify-items: center;
+  line-height: 1;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.playing-card__corner--top {
+  top: 5px;
+}
+
+.playing-card__corner--bottom {
+  left: auto;
+  right: 6px;
+  bottom: 5px;
+  transform: rotate(180deg);
+}
+
+.playing-card__center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  letter-spacing: 0.5px;
+  font-weight: 700;
 }
 
 .game-actions {
@@ -1202,28 +1238,48 @@ input[type="range"] {
 
 .playing-card--selected {
   outline: 2px solid var(--color-accent);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-4px);
+  border-color: rgba(107, 117, 232, 0.9);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.2),
+    0 10px 20px rgba(12, 17, 43, 0.4);
 }
 
 .playing-card--red {
-  color: var(--color-card-red);
+  color: #bd1f3f;
 }
 
 .playing-card--dark {
-  color: var(--color-card-dark);
+  color: #111827;
 }
 
 .playing-card--back {
-  background: linear-gradient(180deg, var(--color-card-back-start) 0%, var(--color-card-back-end) 100%);
-  border-color: var(--color-border-accent);
+  background: linear-gradient(180deg, #b32234 0%, #8e1a2a 100%);
+  border-color: rgba(255, 245, 246, 0.5);
+}
+
+.playing-card__back-pattern {
+  position: absolute;
+  inset: 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 228, 231, 0.8);
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255, 230, 233, 0.24) 0 3px, transparent 3px 6px),
+    repeating-linear-gradient(-45deg, rgba(255, 230, 233, 0.24) 0 3px, transparent 3px 6px);
+  background-size: 12px 12px;
 }
 
 .playing-card--mini {
   min-height: var(--space-8);
   min-width: calc(var(--space-8) * 1.5);
-  padding: var(--space-4);
-  font-size: var(--font-size-hint);
+}
+
+.playing-card--mini .playing-card__corner {
+  font-size: 8px;
+}
+
+.playing-card--mini .playing-card__center {
+  font-size: 12px;
 }
 
 .game-board__trump {
@@ -1233,9 +1289,9 @@ input[type="range"] {
 }
 
 .playing-card--placeholder {
-  background: var(--color-surface);
+  background: rgba(255, 255, 255, 0.07);
   border-style: dashed;
-  border-color: var(--color-border);
+  border-color: rgba(164, 177, 224, 0.5);
 }
 
 .result-card {
@@ -1655,7 +1711,15 @@ input[type="range"] {
   width: 12px;
   height: 12px;
   border-radius: 50%;
+}
+
+.friend-row__dot--online {
   background: #1be46a;
+  box-shadow: 0 0 10px rgba(27, 228, 106, 0.45);
+}
+
+.friend-row__dot--offline {
+  background: rgba(173, 182, 219, 0.5);
 }
 
 .friend-row__delete {

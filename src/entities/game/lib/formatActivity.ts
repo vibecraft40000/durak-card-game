@@ -1,16 +1,10 @@
 import type { ActivityItem, ActivityMoveItem } from "@/store/game.store";
 import type { Player } from "@/entities/player/types";
-
-const ACTION_LABELS: Record<string, string> = {
-  attack: "подкинул",
-  defend: "побил",
-  take: "взял",
-  pass: "пас",
-};
+import { trRuntime } from "@/shared/i18n/runtime";
 
 function getPlayerName(players: Player[], playerId: string): string {
   const p = players.find((x) => x.id === playerId);
-  return p?.displayName ?? p?.username ?? "Игрок";
+  return p?.displayName ?? p?.username ?? trRuntime("Игрок", "Гравець");
 }
 
 export function formatActivityItem(
@@ -22,7 +16,13 @@ export function formatActivityItem(
   }
   const move = item as ActivityMoveItem;
   const name = getPlayerName(players, move.playerId);
-  const actionLabel = ACTION_LABELS[move.action] ?? move.action;
-  const cardPart = move.cardId ? " (карта)" : "";
+  const actionLabels: Record<string, string> = {
+    attack: trRuntime("подкинул", "підкинув"),
+    defend: trRuntime("побил", "побив"),
+    take: trRuntime("взял", "взяв"),
+    pass: trRuntime("пас", "пас"),
+  };
+  const actionLabel = actionLabels[move.action] ?? move.action;
+  const cardPart = move.cardId ? trRuntime(" (карта)", " (карта)") : "";
   return `${name}: ${actionLabel}${cardPart}`;
 }
