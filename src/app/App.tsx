@@ -16,7 +16,6 @@ export function App() {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
-      controller.abort();
       setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
       setAuthReady(true);
     }, 12000);

@@ -237,6 +237,8 @@ export function CreateGamePage() {
                 <button
                   type="button"
                   className={`filter-card ${baseMode === "Подкидной" ? "filter-card--active" : ""}`}
+                  data-active={baseMode === "Подкидной"}
+                  aria-pressed={baseMode === "Подкидной"}
                   onClick={() => setBaseMode("Подкидной")}
                 >
                   <span>{t("create.mode.podkidnoy")}</span>
@@ -244,6 +246,8 @@ export function CreateGamePage() {
                 <button
                   type="button"
                   className={`filter-card ${baseMode === "Переводной" ? "filter-card--active" : ""}`}
+                  data-active={baseMode === "Переводной"}
+                  aria-pressed={baseMode === "Переводной"}
                   onClick={() => setBaseMode("Переводной")}
                 >
                   <span>{t("create.mode.perevodnoy")}</span>

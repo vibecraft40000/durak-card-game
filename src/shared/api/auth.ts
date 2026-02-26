@@ -1,4 +1,4 @@
-import { getTelegramInitData, getTelegramUser } from "@/shared/lib/telegram";
+import { getTelegramUser, waitForTelegramInitData } from "@/shared/lib/telegram";
 import { httpRequest } from "@/shared/api/http";
 
 type AuthUser = {
@@ -79,7 +79,7 @@ export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void>
     return;
   }
 
-  const initData = getTelegramInitData().trim();
+  const initData = (await waitForTelegramInitData({ signal, timeoutMs: 3000 })).trim();
   if (initData) {
     try {
       await authorize(initData, false);

@@ -846,6 +846,13 @@ input[type="range"] {
   box-shadow: 0 0 0 1px rgba(148, 163, 255, 0.45), 0 8px 18px rgba(33, 43, 102, 0.35);
 }
 
+.filter-card[data-active="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-chip-active);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(148, 163, 255, 0.45), 0 8px 18px rgba(33, 43, 102, 0.35);
+}
+
 .filter-card__check {
   position: absolute;
   top: 6px;

@@ -59,22 +59,103 @@ export function getTelegramInitData() {
     return direct;
   }
 
-  // Telegram Web / Desktop can pass initData via tgWebAppData query parameter.
+  // Telegram clients can pass initData via query or hash params.
+  const fromLocation = getTelegramInitDataFromLocation();
+  if (fromLocation) {
+    return fromLocation;
+  }
+
+  return "";
+}
+
+export async function waitForTelegramInitData(options?: {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  intervalMs?: number;
+}): Promise<string> {
+  const signal = options?.signal;
+  const timeoutMs = options?.timeoutMs ?? 2500;
+  const intervalMs = options?.intervalMs ?? 80;
+  const deadline = Date.now() + timeoutMs;
+
+  let initData = getTelegramInitData().trim();
+  if (initData) {
+    return initData;
+  }
+
+  while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      return "";
+    }
+    await wait(intervalMs, signal);
+    if (signal?.aborted) {
+      return "";
+    }
+    initData = getTelegramInitData().trim();
+    if (initData) {
+      return initData;
+    }
+  }
+
+  return "";
+}
+
+function getTelegramInitDataFromLocation() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const fromSearch = getTelegramInitDataFromParams(window.location.search);
+  if (fromSearch) {
+    return fromSearch;
+  }
+
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash;
+  if (!hash) {
+    return "";
+  }
+
+  // Handles both "#tgWebAppData=..." and hash routers like "#/route?tgWebAppData=...".
+  const queryPart = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : hash;
+  return getTelegramInitDataFromParams(queryPart);
+}
+
+function getTelegramInitDataFromParams(rawParams: string) {
+  if (!rawParams) {
+    return "";
+  }
+
   try {
-    const params = new URLSearchParams(window.location.search);
-    const raw = params.get("tgWebAppData") || params.get("tg_data");
-    if (raw && raw.length > 0) {
+    const params = new URLSearchParams(rawParams);
+    const initDataRaw = params.get("tgWebAppData") || params.get("tg_data");
+    if (initDataRaw && initDataRaw.length > 0) {
       try {
-        return decodeURIComponent(raw);
+        return decodeURIComponent(initDataRaw);
       } catch {
-        return raw;
+        return initDataRaw;
       }
     }
   } catch {
     // ignore URL parsing errors
   }
-
   return "";
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timeoutId = window.setTimeout(() => {
+      resolve();
+    }, ms);
+    if (!signal) {
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort);
+  });
 }
 
 /** Start param when opened via t.me/Bot/app?startapp=... */
