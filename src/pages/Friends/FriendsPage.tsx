@@ -4,6 +4,7 @@ import { getFriends, removeFriend, type FriendEntry } from "@/shared/api/friends
 import { getReferralSummary, type ReferralStats } from "@/shared/api/referrals";
 import { getProfile } from "@/shared/api/user";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
+import { buildTelegramMiniAppLink } from "@/shared/lib/telegram";
 import { BackIcon, TrashIcon, UsersIcon } from "@/shared/ui/Icons";
 import { ConfirmModal } from "@/shared/ui/StateBlocks";
 
@@ -38,7 +39,7 @@ export function FriendsPage() {
   const [error, setError] = useState<string | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
 
-  const [refLink, setRefLink] = useState("https://t.me/your_bot?start=ref");
+  const [refLink, setRefLink] = useState(buildTelegramMiniAppLink("ref_default"));
   const [refStats, setRefStats] = useState<ReferralStats | null>(null);
   const [referralError, setReferralError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -66,20 +67,19 @@ export function FriendsPage() {
 
   async function loadReferralSummary() {
     setReferralError(null);
-    const bot = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "your_bot";
     try {
       const [profileResponse, referralSummary] = await Promise.all([
         getProfile(),
         getReferralSummary(20),
       ]);
       const referralCode = (referralSummary.referralCode || profileResponse.user.referral_code) ?? "ref";
-      setRefLink(`https://t.me/${bot}?start=ref_${referralCode}`);
+      setRefLink(buildTelegramMiniAppLink(`ref_${referralCode}`));
       setRefStats(referralSummary.stats);
     } catch {
       void getProfile()
         .then((response) => {
           const referralCode = response.user.referral_code ?? "ref";
-          setRefLink(`https://t.me/${bot}?start=ref_${referralCode}`);
+          setRefLink(buildTelegramMiniAppLink(`ref_${referralCode}`));
         })
         .catch(() => undefined);
       setReferralError(tr("Не удалось загрузить статистику рефералов.", "Не вдалося завантажити статистику рефералів."));

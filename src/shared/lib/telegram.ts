@@ -82,6 +82,28 @@ export function getTelegramStartParam(): string | undefined {
   return window.Telegram?.WebApp?.initDataUnsafe?.start_param;
 }
 
+export function getTelegramBotUsername(): string {
+  const raw = String(import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot").trim();
+  return raw.startsWith("@") ? raw.slice(1) : raw;
+}
+
+export function getTelegramMiniAppShortName(): string {
+  const raw = String(import.meta.env.VITE_TELEGRAM_MINIAPP_SHORT_NAME ?? "app")
+    .trim()
+    .replace(/^\/+/, "");
+  return raw.length > 0 ? raw : "app";
+}
+
+export function buildTelegramMiniAppLink(startParam?: string): string {
+  const botUsername = getTelegramBotUsername();
+  const shortName = getTelegramMiniAppShortName();
+  const base = `https://t.me/${botUsername}/${shortName}`;
+  if (!startParam) {
+    return base;
+  }
+  return `${base}?startapp=${encodeURIComponent(startParam)}`;
+}
+
 /** Opens a t.me link in the Telegram app. */
 export function openTelegramLink(url: string) {
   const fn = (window.Telegram?.WebApp as { openTelegramLink?: (url: string) => void })?.openTelegramLink;

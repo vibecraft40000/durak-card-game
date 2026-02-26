@@ -15,7 +15,7 @@ import { getProfile } from "@/shared/api/user";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { wsClient } from "@/shared/api/ws/socket";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
-import { hapticImpact, hapticNotification } from "@/shared/lib/telegram";
+import { buildTelegramMiniAppLink, hapticImpact, hapticNotification } from "@/shared/lib/telegram";
 import { BackIcon } from "@/shared/ui/Icons";
 import { CardSkeleton, ConfirmModal, EmptyStateBlock, ErrorStateBlock } from "@/shared/ui/StateBlocks";
 import { AppCard } from "@/shared/ui/Card";
@@ -376,8 +376,7 @@ export function GameRoomPage() {
               type="button"
               variant="ghost"
               onClick={async () => {
-                const botUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot";
-                const url = `https://t.me/${botUsername}/app?startapp=room_${id ?? ""}`;
+                const url = buildTelegramMiniAppLink(`room_${id ?? ""}`);
                 const text = t("room.inviteText", { title: room.title });
                 try {
                   await navigator.share({ title: "Дурак Онлайн", text, url });

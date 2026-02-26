@@ -4,9 +4,7 @@ import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
-import { hapticNotification } from "@/shared/lib/telegram";
-
-const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot";
+import { buildTelegramMiniAppLink, hapticNotification } from "@/shared/lib/telegram";
 
 export function GameAddFriendsPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,7 +12,7 @@ export function GameAddFriendsPage() {
   const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
 
   const [copied, setCopied] = useState(false);
-  const shareUrl = `https://t.me/${BOT_USERNAME}?start=room_${id ?? "unknown"}`;
+  const shareUrl = buildTelegramMiniAppLink(`room_${id ?? "unknown"}`);
 
   async function handleShare() {
     const text = tr("Присоединяйся к игре в дурака!", "Приєднуйся до гри в дурня!");
