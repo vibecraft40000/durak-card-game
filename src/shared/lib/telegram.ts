@@ -88,16 +88,15 @@ export function getTelegramBotUsername(): string {
 }
 
 export function getTelegramMiniAppShortName(): string {
-  const raw = String(import.meta.env.VITE_TELEGRAM_MINIAPP_SHORT_NAME ?? "app")
+  return String(import.meta.env.VITE_TELEGRAM_MINIAPP_SHORT_NAME ?? "")
     .trim()
     .replace(/^\/+/, "");
-  return raw.length > 0 ? raw : "app";
 }
 
 export function buildTelegramMiniAppLink(startParam?: string): string {
   const botUsername = getTelegramBotUsername();
   const shortName = getTelegramMiniAppShortName();
-  const base = `https://t.me/${botUsername}/${shortName}`;
+  const base = shortName.length > 0 ? `https://t.me/${botUsername}/${shortName}` : `https://t.me/${botUsername}`;
   if (!startParam) {
     return base;
   }
