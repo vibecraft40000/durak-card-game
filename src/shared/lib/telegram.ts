@@ -129,11 +129,20 @@ function getTelegramInitDataFromParams(rawParams: string) {
     const params = new URLSearchParams(rawParams);
     const initDataRaw = params.get("tgWebAppData") || params.get("tg_data");
     if (initDataRaw && initDataRaw.length > 0) {
-      try {
-        return decodeURIComponent(initDataRaw);
-      } catch {
+      // URLSearchParams already decodes query params.
+      // Additional decodeURIComponent can corrupt "+" into spaces during backend ParseQuery.
+      if (initDataRaw.includes("hash=")) {
         return initDataRaw;
       }
+      try {
+        const decoded = decodeURIComponent(initDataRaw);
+        if (decoded.includes("hash=")) {
+          return decoded;
+        }
+      } catch {
+        // keep raw
+      }
+      return initDataRaw;
     }
   } catch {
     // ignore URL parsing errors
