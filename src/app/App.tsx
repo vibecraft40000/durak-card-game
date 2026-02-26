@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { initTelegramWebApp, getTelegramStartParam } from "@/shared/lib/telegram";
-import { bootstrapTelegramAuth, getAccessToken, getRefreshToken } from "@/shared/api/auth";
+import { ensureAuthSession } from "@/shared/api/auth";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { AppRoutes } from "@/app/routes";
 
@@ -14,12 +14,6 @@ export function App() {
   useEffect(() => {
     initTelegramWebApp();
 
-    if (getAccessToken() || getRefreshToken()) {
-      setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
-      setAuthReady(true);
-      return;
-    }
-
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
@@ -27,13 +21,13 @@ export function App() {
       setAuthReady(true);
     }, 12000);
 
-    bootstrapTelegramAuth(controller.signal)
+    ensureAuthSession(controller.signal)
       .then(() => {
         setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
         setAuthReady(true);
       })
       .catch((err) => {
-        console.warn("[App] bootstrapTelegramAuth failed", err);
+        console.warn("[App] ensureAuthSession failed", err);
         setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
         setAuthReady(true);
       })

@@ -45,10 +45,9 @@ func (h *Handler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For now we only enforce strict replay protection (single-use initData hashes)
-	// in explicit production environment. This avoids locking out users when
-	// Telegram reuses the same initData across devices/sessions during beta.
-	if h.cfg.Env == "production" {
+	// Optional strict replay protection (single-use initData hashes).
+	// Disabled by default because Telegram clients can reuse initData in one session.
+	if h.cfg.StrictInitDataReplay {
 		ok, markErr := h.service.MarkInitDataHashUsed(r.Context(), hash)
 		if !(h.cfg.AllowDevTelegramAuth && hash == "dev") {
 			if markErr != nil {

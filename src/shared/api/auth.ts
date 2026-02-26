@@ -46,6 +46,19 @@ export function clearTokens() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
+export async function ensureAuthSession(signal?: AbortSignal): Promise<void> {
+  if (getAccessToken()) {
+    return;
+  }
+
+  const refreshed = await refreshAccessToken();
+  if (refreshed) {
+    return;
+  }
+
+  await bootstrapTelegramAuth(signal);
+}
+
 export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void> {
   const opts = { method: "POST" as const, skipAuth: true as const, signal };
   const authorize = async (initData: string, dev: boolean) => {

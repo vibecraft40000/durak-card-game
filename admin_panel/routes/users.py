@@ -47,6 +47,24 @@ def index():
 
             ok = adjust_balance(API_BASE_URL, ADMIN_SECRET, user_id, amount, reason)
             flash("Balance updated" if ok else "Failed to update balance", "success" if ok else "danger")
+        elif action == "topup_usd":
+            amount_raw = (request.form.get("amount") or "0").strip()
+            reason = (request.form.get("reason") or "admin topup usd").strip()
+            try:
+                amount = float(amount_raw)
+            except ValueError:
+                flash("Top-up amount must be a number", "warning")
+                return redirect(url_for("users.index", page=page))
+
+            if amount <= 0:
+                flash("Top-up amount must be greater than zero", "warning")
+                return redirect(url_for("users.index", page=page))
+
+            ok = adjust_balance(API_BASE_URL, ADMIN_SECRET, user_id, abs(amount), reason)
+            if ok:
+                flash(f"Top-up applied: +{abs(amount):.2f} USD", "success")
+            else:
+                flash("Failed to top up balance", "danger")
         else:
             flash("Unknown action", "warning")
 

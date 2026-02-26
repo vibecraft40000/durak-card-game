@@ -13,6 +13,7 @@ type Config struct {
 	RedisURL             string
 	TelegramBotToken     string
 	AllowDevTelegramAuth bool
+	StrictInitDataReplay bool
 	DisableMoney         bool
 	JWTSecret            string
 	AccessTokenTTL       time.Duration
@@ -40,6 +41,7 @@ func Load() Config {
 		RedisURL:             getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		TelegramBotToken:     getEnv("TELEGRAM_BOT_TOKEN", "dev-bot-token"),
 		AllowDevTelegramAuth: getBool("ALLOW_DEV_TELEGRAM_AUTH", false),
+		StrictInitDataReplay: getBool("STRICT_INITDATA_REPLAY", false),
 		DisableMoney:         getBool("DISABLE_MONEY", false),
 		JWTSecret:            getEnv("JWT_SECRET", "dev-secret"),
 		AccessTokenTTL:       getDuration("JWT_ACCESS_TTL", 15*time.Minute),

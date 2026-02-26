@@ -7,7 +7,7 @@
 {% else %}
 <div class="card">
   <p>Всего: <strong>{{ total }}</strong></p>
-  <div class="hint">Доступны действия: ban/unban и ручная корректировка баланса.</div>
+  <div class="hint">Доступны действия: ban/unban, пополнение в USD и ручная корректировка ±.</div>
 </div>
 
 <div class="card">
@@ -20,13 +20,15 @@
         <th>Имя</th>
         <th>Язык</th>
         <th>Ban</th>
+        <th>Пополнение USD</th>
+        <th>Корректировка ±</th>
         <th>Действия</th>
       </tr>
     </thead>
     <tbody>
       {% for u in users %}
       <tr>
-        <td>{{ u.id[:8] }}…</td>
+        <td><code>{{ u.id }}</code></td>
         <td>{{ u.telegram_id }}</td>
         <td>@{{ u.username or '—' }}</td>
         <td>{{ u.display_name or u.first_name or (u.username or '—') }}</td>
@@ -39,6 +41,26 @@
           {% endif %}
         </td>
         <td>
+          <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <input type="hidden" name="action" value="topup_usd">
+            <input class="input-sm" type="number" step="0.01" min="0.01" name="amount" placeholder="USD" required>
+            <input class="input-sm" type="text" name="reason" placeholder="reason" value="admin topup usd">
+            <button type="submit" class="btn btn-success">Пополнить</button>
+          </form>
+        </td>
+
+        <td>
+          <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <input type="hidden" name="action" value="adjust_balance">
+            <input class="input-sm" type="number" step="0.01" name="amount" placeholder="+/- USD" required>
+            <input class="input-sm" type="text" name="reason" placeholder="reason" value="manual adjust">
+            <button type="submit" class="btn btn-muted">Скорректировать</button>
+          </form>
+        </td>
+
+        <td>
           <div class="table-actions">
             <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
               <input type="hidden" name="user_id" value="{{ u.id }}">
@@ -48,14 +70,6 @@
               {% else %}
               <button type="submit" class="btn btn-danger">Бан</button>
               {% endif %}
-            </form>
-
-            <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
-              <input type="hidden" name="user_id" value="{{ u.id }}">
-              <input type="hidden" name="action" value="adjust_balance">
-              <input class="input-sm" type="number" step="0.01" name="amount" placeholder="amount" required>
-              <input class="input-sm" type="text" name="reason" placeholder="reason" value="manual adjust">
-              <button type="submit" class="btn btn-muted">Скорректировать</button>
             </form>
           </div>
         </td>

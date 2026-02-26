@@ -836,11 +836,14 @@ input[type="range"] {
   text-align: center;
   font-size: var(--font-size-small);
   position: relative;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .filter-card--active {
   border-color: var(--color-accent);
-  background: var(--color-btn-secondary);
+  background: var(--color-chip-active);
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(148, 163, 255, 0.45), 0 8px 18px rgba(33, 43, 102, 0.35);
 }
 
 .filter-card__check {
