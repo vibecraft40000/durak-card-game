@@ -496,10 +496,7 @@ export function PlayPage() {
           <p className="screen__subtitle">{t("play.subtitle.main")}</p>
 
           <AppCard className="play-main-actions">
-            <Link className="button button--primary" to="/play/create">
-              {t("play.quick.createGame")}
-            </Link>
-            <button type="button" className="button" onClick={handleQuickGame}>
+            <button type="button" className="button button--primary" onClick={handleQuickGame}>
               {t("play.quick.quickGame")}
             </button>
             <div className="play-main-actions__join-row">

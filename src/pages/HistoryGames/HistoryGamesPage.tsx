@@ -7,6 +7,7 @@ import { BackIcon } from "@/shared/ui/Icons";
 export function HistoryGamesPage() {
   const { language } = useLanguage();
   const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
+
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export function HistoryGamesPage() {
       const response = await getHistory({ limit: 50 });
       setItems(response.items);
     } catch {
-      setError(tr("Не удалось загрузить историю игр.", "Не вдалося завантажити історію ігор."));
+      setError(tr("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РёСЃС‚РѕСЂРёСЋ РёРіСЂ.", "РќРµ РІРґР°Р»РѕСЃСЏ Р·Р°РІР°РЅС‚Р°Р¶РёС‚Рё С–СЃС‚РѕСЂС–СЋ С–РіРѕСЂ."));
     } finally {
       setIsLoading(false);
     }
@@ -34,28 +35,30 @@ export function HistoryGamesPage() {
         <Link className="icon-button" to="/profile">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">{tr("История игр", "Історія ігор")}</h1>
+        <h1 className="page-header__title">{tr("РСЃС‚РѕСЂРёСЏ РёРіСЂ", "Р†СЃС‚РѕСЂС–СЏ С–РіРѕСЂ")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <div className="action-list action-list--inline">
         <Link className="button" to="/profile/history/date">
-          {tr("По дате", "За датою")}
+          {tr("РџРѕ РґР°С‚Рµ", "Р—Р° РґР°С‚РѕСЋ")}
         </Link>
         <Link className="button" to="/profile/history/calendar">
-          {tr("Календарь", "Календар")}
+          {tr("РљР°Р»РµРЅРґР°СЂСЊ", "РљР°Р»РµРЅРґР°СЂ")}
         </Link>
         <Link className="button" to="/play">
-          {tr("Играть", "Грати")}
+          {tr("РРіСЂС‹", "Р†РіСЂРё")}
         </Link>
       </div>
 
       <div className="list">
-        {isLoading && <div className="card__hint">{tr("Загрузка...", "Завантаження...")}</div>}
+        {isLoading && <div className="card__hint">{tr("Р—Р°РіСЂСѓР·РєР°...", "Р—Р°РІР°РЅС‚Р°Р¶РµРЅРЅСЏ...")}</div>}
         {error && <div className="card__hint card__hint--error">{error}</div>}
+
         {!isLoading && !error && items.length === 0 && (
-          <div className="card__hint">{tr("Записей пока нет.", "Записів поки немає.")}</div>
+          <div className="card__hint">{tr("РСЃС‚РѕСЂРёСЏ РёРіСЂ РїСѓСЃС‚Р°.", "Р†СЃС‚РѕСЂС–СЏ С–РіРѕСЂ РїРѕСЂРѕР¶РЅСЏ.")}</div>
         )}
+
         {!isLoading &&
           !error &&
           items.map((item) => {
@@ -68,10 +71,10 @@ export function HistoryGamesPage() {
                   <span>{item.matchId.slice(0, 8)}</span>
                 </div>
                 <div className="card__hint">
-                  {item.result === "win" ? tr("Победа", "Перемога") : tr("Поражение", "Поразка")}
+                  {item.result === "win" ? tr("РџРѕР±РµРґР°", "РџРµСЂРµРјРѕРіР°") : tr("РџРѕСЂР°Р¶РµРЅРёРµ", "РџРѕСЂР°Р·РєР°")}
                 </div>
                 <div className="card__row">
-                  <span>{tr("Результат", "Результат")}</span>
+                  <span>{tr("Р РµР·СѓР»СЊС‚Р°С‚", "Р РµР·СѓР»СЊС‚Р°С‚")}</span>
                   <strong>{delta}</strong>
                 </div>
                 <div className="card__hint">{createdAt}</div>

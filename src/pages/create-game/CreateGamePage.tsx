@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CreateRoomInput, DeckSize, GameMode } from "@/entities/match/types";
 import { createRoom } from "@/shared/api/rooms";
+import { HttpError } from "@/shared/api/http";
+import { bootstrapTelegramAuth, clearTokens } from "@/shared/api/auth";
 import { getProfile } from "@/shared/api/user";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, CheaterIcon } from "@/shared/ui/Icons";
@@ -94,8 +96,27 @@ export function CreateGamePage() {
     try {
       const room = await createRoom(payload);
       navigate(`/room/${room.id}`);
-    } catch {
-      setError(t("create.error.failed"));
+      return;
+    } catch (err: unknown) {
+      const status = (err as { status?: number })?.status;
+      if (status === 401) {
+        clearTokens();
+        try {
+          await bootstrapTelegramAuth();
+          const room = await createRoom(payload);
+          navigate(`/room/${room.id}`);
+          return;
+        } catch {
+          // continue to user-facing error below
+        }
+      }
+      if (err instanceof HttpError && typeof err.responseBody === "string" && err.responseBody.trim()) {
+        setError(err.responseBody);
+      } else if (err instanceof Error && err.message.trim()) {
+        setError(err.message);
+      } else {
+        setError(t("create.error.failed"));
+      }
     } finally {
       setIsSubmitting(false);
     }

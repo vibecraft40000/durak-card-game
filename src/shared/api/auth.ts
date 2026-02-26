@@ -48,41 +48,41 @@ export function clearTokens() {
 
 export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void> {
   const opts = { method: "POST" as const, skipAuth: true as const, signal };
-  if (FORCE_DEV_AUTH) {
+  const authorize = async (initData: string, dev: boolean) => {
     const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
       ...opts,
-      body: { initData: buildDevInitData() },
+      body: { initData },
     });
     setTokens(response.accessToken, response.refreshToken);
-    localStorage.setItem(DEV_AUTH_FLAG_KEY, "true");
-    return;
-  }
-  const initData = getTelegramInitData();
-  if (!initData) {
-    // In production on the real domain we must NOT fall back to dev auth.
-    // This effectively blocks direct access without Telegram WebApp context.
-    if (IS_PROD_DOMAIN) {
-      // Mark that dev auth was not used and clear any stale tokens.
-      clearTokens();
+    if (dev) {
+      localStorage.setItem(DEV_AUTH_FLAG_KEY, "true");
+    } else {
       localStorage.removeItem(DEV_AUTH_FLAG_KEY);
-      throw new Error("Telegram initData is missing in production environment");
     }
-    // In local/dev environments we keep the convenient dev auth fallback.
-    const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
-      ...opts,
-      body: { initData: buildDevInitData() },
-    });
-    setTokens(response.accessToken, response.refreshToken);
-    localStorage.setItem(DEV_AUTH_FLAG_KEY, "true");
+  };
+
+  if (FORCE_DEV_AUTH) {
+    await authorize(buildDevInitData(), true);
     return;
   }
 
-  const response = await httpRequest<TelegramAuthResponse>("/auth/telegram", {
-    ...opts,
-    body: { initData },
-  });
-  setTokens(response.accessToken, response.refreshToken);
-  localStorage.removeItem(DEV_AUTH_FLAG_KEY);
+  const initData = getTelegramInitData().trim();
+  if (initData) {
+    try {
+      await authorize(initData, false);
+      return;
+    } catch (error) {
+      if (IS_PROD_DOMAIN) {
+        throw error;
+      }
+    }
+  }
+
+  if (IS_PROD_DOMAIN) {
+    throw new Error("Telegram initData is missing in production environment");
+  }
+
+  await authorize(buildDevInitData(), true);
 }
 
 export async function refreshAccessToken(): Promise<string | null> {

@@ -2,10 +2,10 @@ import { memo } from "react";
 import type { Suit } from "@/entities/card/types";
 
 const SUIT_SYMBOLS: Record<string, string> = {
-  hearts: "¦",
-  diamonds: "¦",
-  clubs: "¦",
-  spades: "¦",
+  hearts: "â™¥",
+  diamonds: "â™¦",
+  clubs: "â™£",
+  spades: "â™ ",
 };
 
 const FACE_RANKS = new Set(["J", "Q", "K", "A"]);
@@ -15,9 +15,7 @@ function getSuitSymbol(suit: string): string {
 }
 
 function getSuitModifier(suit: string): string {
-  return suit === "hearts" || suit === "diamonds"
-    ? "playing-card--red"
-    : "playing-card--dark";
+  return suit === "hearts" || suit === "diamonds" ? "playing-card--red" : "playing-card--dark";
 }
 
 type PlayingCardProps = {
@@ -44,31 +42,18 @@ export const PlayingCard = memo(function PlayingCard({
   onClick,
 }: PlayingCardProps) {
   const baseClass = "playing-card";
-  const variantClass =
-    variant === "table"
-      ? "playing-card--table"
-      : variant === "mini"
-        ? "playing-card--mini"
-        : "";
+  const variantClass = variant === "table" ? "playing-card--table" : variant === "mini" ? "playing-card--mini" : "";
   const suitClass = suit ? getSuitModifier(suit) : "";
   const selectedClass = selected ? "playing-card--selected" : "";
   const dimmedClass = dimmed ? "playing-card--dimmed" : "";
 
   if (placeholder) {
-    return (
-      <div
-        className={`${baseClass} playing-card--placeholder ${variantClass}`}
-        aria-hidden
-      />
-    );
+    return <div className={`${baseClass} playing-card--placeholder ${variantClass}`} aria-hidden />;
   }
 
   if (!faceUp) {
     return (
-      <div
-        className={`${baseClass} playing-card--back ${variantClass}`}
-        aria-label="Ðóáàøêà êàðòû"
-      >
+      <div className={`${baseClass} playing-card--back ${variantClass}`} aria-label="card back">
         <span className="playing-card__back-pattern" />
       </div>
     );
@@ -91,24 +76,11 @@ export const PlayingCard = memo(function PlayingCard({
     </>
   );
 
-  const className = [
-    baseClass,
-    variantClass,
-    suitClass,
-    selectedClass,
-    dimmedClass,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const className = [baseClass, variantClass, suitClass, selectedClass, dimmedClass].filter(Boolean).join(" ");
 
   if (interactive && onClick) {
     return (
-      <button
-        type="button"
-        className={className}
-        onClick={onClick}
-        aria-label={`Êàðòà ${rank} ${suit}`}
-      >
+      <button type="button" className={className} onClick={onClick} aria-label={`card ${rank ?? ""} ${symbol}`}>
         {content}
       </button>
     );

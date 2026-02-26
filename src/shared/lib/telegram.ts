@@ -82,7 +82,7 @@ export function getTelegramStartParam(): string | undefined {
   return window.Telegram?.WebApp?.initDataUnsafe?.start_param;
 }
 
-/** Opens a t.me link in the Telegram app (required for Wallet Pay directPayLink). */
+/** Opens a t.me link in the Telegram app. */
 export function openTelegramLink(url: string) {
   const fn = (window.Telegram?.WebApp as { openTelegramLink?: (url: string) => void })?.openTelegramLink;
   if (fn) {

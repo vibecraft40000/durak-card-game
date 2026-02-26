@@ -44,7 +44,7 @@ export function HistoryCalendarPage() {
       const days = await getHistoryCalendar(monthKey(date));
       setItems(days);
     } catch {
-      setError(tr("Не удалось загрузить календарь.", "Не вдалося завантажити календар."));
+      setError(tr("РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєР°Р»РµРЅРґР°СЂСЊ РёСЃС‚РѕСЂРёРё.", "РќРµ РІРґР°Р»РѕСЃСЏ Р·Р°РІР°РЅС‚Р°Р¶РёС‚Рё РєР°Р»РµРЅРґР°СЂ С–СЃС‚РѕСЂС–С—."));
     } finally {
       setIsLoading(false);
     }
@@ -90,21 +90,21 @@ export function HistoryCalendarPage() {
         <Link className="icon-button" to="/profile/history/games">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">{tr("История игр", "Історія ігор")}</h1>
+        <h1 className="page-header__title">{tr("РСЃС‚РѕСЂРёСЏ РёРіСЂ", "Р†СЃС‚РѕСЂС–СЏ С–РіРѕСЂ")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <div className="card card--compact card__row">
         <button type="button" className="button" onClick={() => setActiveMonth((prev) => shiftMonth(prev, -1))}>
-          {tr("< Месяц", "< Місяць")}
+          {tr("< РќР°Р·Р°Рґ", "< РќР°Р·Р°Рґ")}
         </button>
         <strong>{monthTitle}</strong>
         <button type="button" className="button" onClick={() => setActiveMonth((prev) => shiftMonth(prev, 1))}>
-          {tr("Месяц >", "Місяць >")}
+          {tr("Р’РїРµСЂС‘Рґ >", "Р’РїРµСЂРµРґ >")}
         </button>
       </div>
 
-      {isLoading && <div className="card__hint">{tr("Загрузка...", "Завантаження...")}</div>}
+      {isLoading && <div className="card__hint">{tr("Р—Р°РіСЂСѓР·РєР°...", "Р—Р°РІР°РЅС‚Р°Р¶РµРЅРЅСЏ...")}</div>}
       {error && <div className="card__hint card__hint--error">{error}</div>}
 
       <div className="card">
@@ -124,10 +124,10 @@ export function HistoryCalendarPage() {
                 title={
                   dayStats
                     ? tr(
-                        `Игр: ${dayStats.games}, результат: ${dayStats.profit.toFixed(2)}`,
-                        `Ігор: ${dayStats.games}, результат: ${dayStats.profit.toFixed(2)}`,
+                        `РРіСЂ: ${dayStats.games}, СЂРµР·СѓР»СЊС‚Р°С‚: ${dayStats.profit.toFixed(2)}`,
+                        `Р†РіРѕСЂ: ${dayStats.games}, СЂРµР·СѓР»СЊС‚Р°С‚: ${dayStats.profit.toFixed(2)}`,
                       )
-                    : tr("Нет игр", "Немає ігор")
+                    : tr("РРіСЂ РЅРµС‚", "Р†РіРѕСЂ РЅРµРјР°С”")
                 }
               >
                 <span>{cell.day}</span>
