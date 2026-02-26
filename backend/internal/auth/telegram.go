@@ -52,8 +52,13 @@ func ValidateInitData(rawInitData string, botToken string, allowDevAuth bool, ma
 	}
 
 	dataCheckString := buildDataCheckString(values)
-	secret := sha256.Sum256([]byte(botToken))
-	mac := hmac.New(sha256.New, secret[:])
+	// Telegram WebApp validation:
+	// secret_key = HMAC_SHA256("WebAppData", bot_token)
+	secretMac := hmac.New(sha256.New, []byte("WebAppData"))
+	secretMac.Write([]byte(botToken))
+	secretKey := secretMac.Sum(nil)
+
+	mac := hmac.New(sha256.New, secretKey)
 	mac.Write([]byte(dataCheckString))
 	computed := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(computed), []byte(hash)) {

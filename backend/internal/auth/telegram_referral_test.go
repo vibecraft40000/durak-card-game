@@ -51,8 +51,11 @@ func TestValidateInitData_ExtractsReferralCode(t *testing.T) {
 	values.Set("start_param", "ref_MyCode-1")
 
 	dataCheckString := buildDataCheckString(values)
-	secret := sha256.Sum256([]byte(botToken))
-	mac := hmac.New(sha256.New, secret[:])
+	secretMac := hmac.New(sha256.New, []byte("WebAppData"))
+	secretMac.Write([]byte(botToken))
+	secretKey := secretMac.Sum(nil)
+
+	mac := hmac.New(sha256.New, secretKey)
 	mac.Write([]byte(dataCheckString))
 	values.Set("hash", hex.EncodeToString(mac.Sum(nil)))
 
