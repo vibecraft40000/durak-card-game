@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import type { GameMode, Room } from "@/entities/match/types";
 import { getRooms } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
 import {
@@ -155,8 +156,27 @@ function roomMatchesMode(roomMode: string, modeFilter: FilterState["mode"]) {
   return raw.includes("перевод") || raw.includes("perevod");
 }
 
+function formatModeLabel(mode: string, t: (key: string, params?: Record<string, string | number>) => string) {
+  const raw = mode.toLowerCase();
+  const isPodkidnoy = raw.includes("подкид") || raw.includes("podkid");
+  const isPerevodnoy = raw.includes("перевод") || raw.includes("perevod");
+  const isShuler = raw.includes("шулер") || raw.includes("shuler");
+
+  const baseLabel = isPodkidnoy
+    ? t("play.types.podkidnoy")
+    : isPerevodnoy
+      ? t("play.types.perevodnoy")
+      : mode;
+
+  if (!isShuler) {
+    return baseLabel;
+  }
+  return `${baseLabel} ${t("play.types.shuler")}`;
+}
+
 export function PlayPage() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [filters, setFilters] = useState<FilterState>(() => {
     if (typeof window === "undefined") return INITIAL_FILTERS;
@@ -202,7 +222,7 @@ export function PlayPage() {
       const data = await getRooms(signal);
       setRooms(data);
     } catch {
-      setError("Не удалось загрузить список игр.");
+      setError(t("play.loadingError"));
     } finally {
       setIsLoading(false);
     }
@@ -266,7 +286,7 @@ export function PlayPage() {
   function handleConnectById() {
     const roomId = joinRoomId.trim();
     if (!roomId) {
-      setJoinRoomError("Введите ID игры");
+      setJoinRoomError(t("play.quick.enterId"));
       return;
     }
     setJoinRoomError(null);
@@ -287,7 +307,7 @@ export function PlayPage() {
     <>
       <section className="screen play-screen">
         <div className="play-screen__head">
-          <h1 className="screen__title">Игры</h1>
+          <h1 className="screen__title">{t("play.title")}</h1>
           <div className="play-screen__head-balance">
             <div className="play-screen__head-balance-main">
               <span className="play-screen__head-balance-symbol">$</span>
@@ -307,13 +327,11 @@ export function PlayPage() {
 
       {isFilterOpen ? (
         <>
-          <p className="screen__subtitle">
-            Подберите стол по колоде, игрокам и типу игры.
-          </p>
+          <p className="screen__subtitle">{t("play.subtitle.filters")}</p>
 
           <AppCard className="card--compact">
             <div className="card__row">
-              <span>Макс. ставка</span>
+              <span>{t("play.maxStake")}</span>
               <strong>${filters.maxStake}</strong>
             </div>
             <input
@@ -328,7 +346,7 @@ export function PlayPage() {
           </AppCard>
 
           <div className="filter-group">
-            <span className="filter-group__label">Колода</span>
+            <span className="filter-group__label">{t("play.deck")}</span>
             <div className="pill-group">
               {[24, 36, 52].map((deck) => (
                 <button
@@ -344,7 +362,7 @@ export function PlayPage() {
           </div>
 
           <div className="filter-group">
-            <span className="filter-group__label">Игроки</span>
+            <span className="filter-group__label">{t("play.players")}</span>
             <div className="pill-group">
               {[2, 3, 4].map((players) => (
                 <button
@@ -362,41 +380,41 @@ export function PlayPage() {
           </div>
 
           <div className="filter-group">
-            <span className="filter-group__label">Тип игры</span>
+            <span className="filter-group__label">{t("play.gameType")}</span>
             <div className="filter-grid">
               {[
                 {
-                  title: "Подкидной",
+                  title: t("play.types.podkidnoy"),
                   group: "mode" as const,
                   modeValue: "Подкидной" as const,
                   icon: PodkidnoyIcon,
                 },
                 {
-                  title: "Честная игра",
+                  title: t("play.types.fair"),
                   group: "fairness" as const,
                   fairnessValue: "Честная игра" as const,
                   icon: FairPlayIcon,
                 },
                 {
-                  title: "Классика",
+                  title: t("play.types.classic"),
                   group: "style" as const,
                   styleValue: "Классика" as const,
                   icon: ClassicIcon,
                 },
                 {
-                  title: "Переводной",
+                  title: t("play.types.perevodnoy"),
                   group: "mode" as const,
                   modeValue: "Переводной" as const,
                   icon: TransferIcon,
                 },
                 {
-                  title: "Шулер",
+                  title: t("play.types.shuler"),
                   group: "fairness" as const,
                   fairnessValue: "Шулер" as const,
                   icon: CheaterIcon,
                 },
                 {
-                  title: "Ничья",
+                  title: t("play.types.draw"),
                   group: "style" as const,
                   styleValue: "Ничья" as const,
                   icon: DrawIcon,
@@ -462,27 +480,27 @@ export function PlayPage() {
                 }))
               }
             >
-              Сбросить
+              {t("common.reset")}
             </button>
             <button
               className="button button--primary"
               type="button"
               onClick={() => setIsFilterOpen(false)}
             >
-              Сохранить
+              {t("common.save")}
             </button>
           </div>
         </>
       ) : (
         <>
-          <p className="screen__subtitle">Выберите комнату или создайте свой стол.</p>
+          <p className="screen__subtitle">{t("play.subtitle.main")}</p>
 
           <AppCard className="play-main-actions">
             <Link className="button button--primary" to="/play/create">
-              Создать игру
+              {t("play.quick.createGame")}
             </Link>
             <button type="button" className="button" onClick={handleQuickGame}>
-              Быстрая игра
+              {t("play.quick.quickGame")}
             </button>
             <div className="play-main-actions__join-row">
               <input
@@ -493,10 +511,10 @@ export function PlayPage() {
                     setJoinRoomError(null);
                   }
                 }}
-                placeholder="ID комнаты"
+                placeholder={t("play.quick.joinPlaceholder")}
               />
               <button type="button" className="button" onClick={handleConnectById}>
-                Подключиться
+                {t("play.quick.connect")}
               </button>
             </div>
             {joinRoomError && <div className="card__hint card__hint--error">{joinRoomError}</div>}
@@ -561,11 +579,11 @@ export function PlayPage() {
             >
               <div className="play-quick-filters__label">
                 <DeckIcon size={16} />
-                <span>Колода</span>
+                <span>{t("play.deck")}</span>
               </div>
               {hasDeckFilter ? (
                 <div className="play-quick-filters__value">
-                  <span>{filters.deck} карт</span>
+                  <span>{t("play.cardCountSuffix", { count: filters.deck })}</span>
                 </div>
               ) : (
                 <div className="play-quick-filters__value play-quick-filters__value--column">
@@ -584,15 +602,15 @@ export function PlayPage() {
               >
                 <div className="play-quick-filters__label">
                   <UserIcon size={16} />
-                  <span>Игроки</span>
+                  <span>{t("play.players")}</span>
                 </div>
                 {hasPlayersFilter ? (
                   <div className="play-quick-filters__value">
-                    <span>{filters.maxPlayers} игрока</span>
+                    <span>{t("play.playersSuffix", { count: filters.maxPlayers })}</span>
                   </div>
                 ) : (
                   <div className="play-quick-filters__value">
-                    <span>2–3–4</span>
+                    <span>{t("play.playersRange")}</span>
                   </div>
                 )}
               </button>
@@ -607,8 +625,7 @@ export function PlayPage() {
                 </div>
                 <div className="play-quick-filters__value">
                   <span>
-                    10 – {filters.maxStake}
-                    {hasStakeFilter ? "+" : ""}
+                    {t("play.stakeRange", { max: filters.maxStake, plus: hasStakeFilter ? "+" : "" })}
                   </span>
                 </div>
               </button>
@@ -631,17 +648,17 @@ export function PlayPage() {
           )}
           {error && (
             <ErrorStateBlock
-              title="Ошибка загрузки"
+              title={t("play.errorTitle")}
               message={error}
-              actionLabel="Повторить"
+              actionLabel={t("common.retry")}
               onAction={() => void loadRooms()}
             />
           )}
 
           {!isLoading && !error && filteredRooms.length === 0 && (
             <EmptyStateBlock
-              title="Комнаты не найдены"
-              message="С такими фильтрами активных столов нет. Попробуйте изменить параметры или создать игру."
+              title={t("play.empty.title")}
+              message={t("play.empty.message")}
             />
           )}
 
@@ -664,8 +681,8 @@ export function PlayPage() {
                 <div className="room-card__title">{room.title}</div>
                 <div className="room-card__bottom">
                   <div className="room-card__meta">
-                    <span>{room.mode}</span>
-                    <span>{room.deck} карт</span>
+                    <span>{formatModeLabel(room.mode, t)}</span>
+                    <span>{t("play.cardCountSuffix", { count: room.deck })}</span>
                   </div>
                   <Link className="room-card__enter" to={`/room/${room.id}`}>
                     <ArrowRightThinIcon size={18} />

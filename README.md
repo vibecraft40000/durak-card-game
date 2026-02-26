@@ -10,6 +10,11 @@
 - FSD-like структура в `src/`
 - Go backend (chi, JWT, WebSocket, Redis, Postgres)
 
+## Дизайн-артефакты
+
+- 3 визуальных направления: [docs/design/visual-directions.md](docs/design/visual-directions.md)
+- Style guide (цвета, шрифты, состояния, адаптив): [docs/design/style-guide.md](docs/design/style-guide.md)
+
 ## Авторизация и доступ
 
 - **Мини-аппа рассчитана на запуск только из Telegram**: мобильный клиент, Telegram Desktop, Telegram Web (web.telegram.org). При открытии из Telegram приложение получает `initData`, по которому бэкенд выдаёт JWT (Bearer).

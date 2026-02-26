@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Room } from "@/entities/match/types";
 import { HttpError } from "@/shared/api/http";
@@ -14,35 +14,65 @@ import {
 import { getProfile } from "@/shared/api/user";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { wsClient } from "@/shared/api/ws/socket";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { hapticImpact, hapticNotification } from "@/shared/lib/telegram";
 import { BackIcon } from "@/shared/ui/Icons";
 import { CardSkeleton, ConfirmModal, EmptyStateBlock, ErrorStateBlock } from "@/shared/ui/StateBlocks";
 import { AppCard } from "@/shared/ui/Card";
 import { AppButton } from "@/shared/ui/Button";
 
-function formatApiError(e: unknown, fallback = "Попробуйте снова."): string {
+function formatApiError(
+  e: unknown,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  fallbackKey: string,
+): string {
   if (e instanceof HttpError) {
-    if (e.status === 401)
-      return "Ошибка авторизации. Откройте приложение заново из Telegram.";
+    if (e.status === 401) {
+      return t("room.error.auth");
+    }
     const body = String(e.responseBody ?? e.message ?? "").toLowerCase();
-    if (body.includes("insufficient balance"))
-      return "Недостаточно средств у одного из игроков. Пополните баланс.";
-    if (body.includes("match start already in progress"))
-      return "Старт уже выполняется. Подождите несколько секунд и попробуйте снова.";
-    if (body.includes("stake confirmation is required"))
-      return "Сначала все участники должны подтвердить ставку.";
-    if (body.includes("stake confirmation expired"))
-      return "Время подтверждения ставки истекло. Комната отменена.";
-    if (body.includes("only room participants can confirm stake"))
-      return "Подтверждать ставку могут только участники комнаты.";
-    return body ? String(e.responseBody ?? e.message) : fallback;
+    if (body.includes("insufficient balance")) {
+      return t("room.error.insufficientBalance");
+    }
+    if (body.includes("match start already in progress")) {
+      return t("room.error.startInProgress");
+    }
+    if (body.includes("stake confirmation is required")) {
+      return t("room.error.stakeRequired");
+    }
+    if (body.includes("stake confirmation expired")) {
+      return t("room.error.stakeExpired");
+    }
+    if (body.includes("only room participants can confirm stake")) {
+      return t("room.error.notParticipant");
+    }
+    return body ? String(e.responseBody ?? e.message) : t(fallbackKey);
   }
-  return fallback;
+  return t(fallbackKey);
+}
+
+function formatModeLabel(mode: string, t: (key: string, params?: Record<string, string | number>) => string) {
+  const raw = mode.toLowerCase();
+  const isPodkidnoy = raw.includes("подкид") || raw.includes("podkid");
+  const isPerevodnoy = raw.includes("перевод") || raw.includes("perevod");
+  const isShuler = raw.includes("шулер") || raw.includes("shuler");
+
+  const baseLabel = isPodkidnoy
+    ? t("play.types.podkidnoy")
+    : isPerevodnoy
+      ? t("play.types.perevodnoy")
+      : mode;
+  if (!isShuler) {
+    return baseLabel;
+  }
+  return `${baseLabel} ${t("play.types.shuler")}`;
 }
 
 export function GameRoomPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t, language } = useLanguage();
+
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,12 +94,11 @@ export function GameRoomPage() {
       setIsLoading(false);
       return;
     }
-    // Join room first (idempotent for creator), then fetch latest state
     void joinRoom(id)
       .then((roomData) => setRooms([roomData]))
-      .catch(() => setError("Не удалось войти в комнату."))
+      .catch(() => setError(t("room.error.join")))
       .finally(() => setIsLoading(false));
-  }, [id]);
+  }, [id, t]);
 
   const room = useMemo(() => rooms.find((item) => item.id === id), [id, rooms]);
   const isCurrentUserConfirmed = room && currentUserId ? room.readyUserIds.includes(currentUserId) : false;
@@ -82,33 +111,27 @@ export function GameRoomPage() {
   const isCreator = room && currentUserId && room.playerIds?.[0] === currentUserId;
   const allReady = room && (room.readyPlayers ?? 0) >= (room.players ?? room.maxPlayers ?? 2);
   const allStakeConfirmed = room && (room.stakeConfirmedPlayers ?? 0) >= realPlayersCount;
+  const locale = language === "uk" ? "uk-UA" : "ru-RU";
   const stakeConfirmDeadlineLabel = room?.stakeConfirmDeadline
-    ? new Date(room.stakeConfirmDeadline).toLocaleTimeString("ru-RU", {
+    ? new Date(room.stakeConfirmDeadline).toLocaleTimeString(locale, {
         hour: "2-digit",
         minute: "2-digit",
       })
     : null;
-  const canConfirm = Boolean(
-    room &&
-      room.status === "waiting" &&
-      playersCount >= 2 &&
-      !isCurrentUserConfirmed,
-  );
+  const canConfirm = Boolean(room && room.status === "waiting" && playersCount >= 2 && !isCurrentUserConfirmed);
   const canConfirmStake = Boolean(
     room &&
       room.status === "awaiting_stake_confirm" &&
       playersCount >= 2 &&
       !isCurrentUserStakeConfirmed,
   );
-  const canStart = Boolean(
-    room && room.status === "waiting" && isCreator && allReady && playersCount >= 2,
-  );
+  const canStart = Boolean(room && room.status === "waiting" && isCreator && allReady && playersCount >= 2);
 
   async function confirmReady() {
     if (!id) return;
     if (isReadyLoading) return;
     if (!room || room.players < 2) {
-      setInfoMessage("Нельзя начать: в комнате пока нет соперника.");
+      setInfoMessage(t("room.noOpponent"));
       return;
     }
     setIsReadyLoading(true);
@@ -119,13 +142,13 @@ export function GameRoomPage() {
       wsClient.send({ type: "confirm_join", payload: { roomId: id } });
       const updatedRoom = await readyRoom(id);
       setRooms([updatedRoom]);
-      setInfoMessage("Подтверждение отправлено...");
+      setInfoMessage(t("room.readySent"));
       setIsWaitingStart(true);
       if (updatedRoom.matchId) {
         navigate(`/game/${id}`);
       }
     } catch (e) {
-      const msg = formatApiError(e, "Не удалось подтвердить готовность. Проверьте подключение и попробуйте снова.");
+      const msg = formatApiError(e, t, "room.error.ready");
       setError(msg);
     } finally {
       setIsReadyLoading(false);
@@ -148,9 +171,9 @@ export function GameRoomPage() {
         navigate(`/game/${id}`);
         return;
       }
-      setInfoMessage("Ставка подтверждена. Ждем остальных игроков.");
+      setInfoMessage(t("room.stakeConfirmed"));
     } catch (e) {
-      const msg = formatApiError(e, "Не удалось подтвердить ставку. Попробуйте снова.");
+      const msg = formatApiError(e, t, "room.error.stake");
       setError(msg);
     } finally {
       setIsReadyLoading(false);
@@ -161,11 +184,11 @@ export function GameRoomPage() {
     if (!id) return;
     if (isStartLoading) return;
     if (room?.status === "awaiting_stake_confirm") {
-      setInfoMessage("Сначала все игроки должны подтвердить ставку.");
+      setInfoMessage(t("room.needStakeBeforeStart"));
       return;
     }
     if (!room || room.players < 2 || !allReady) {
-      setInfoMessage("Сначала все должны подтвердить участие.");
+      setInfoMessage(t("room.needAllReady"));
       return;
     }
     setIsStartLoading(true);
@@ -180,7 +203,7 @@ export function GameRoomPage() {
         navigate(`/game/${id}`);
       }
     } catch (e) {
-      const msg = formatApiError(e, "Не удалось начать игру. Попробуйте снова.");
+      const msg = formatApiError(e, t, "room.error.start");
       setError(msg);
     } finally {
       setIsStartLoading(false);
@@ -216,13 +239,21 @@ export function GameRoomPage() {
         const confirmed = normalized.stakeConfirmedPlayers ?? 0;
         if (realPlayers > 0) {
           if (normalized.stakeConfirmDeadline) {
-            const leftSec = Math.max(
-              0,
-              Math.ceil((normalized.stakeConfirmDeadline - Date.now()) / 1000),
+            const leftSec = Math.max(0, Math.ceil((normalized.stakeConfirmDeadline - Date.now()) / 1000));
+            setInfoMessage(
+              t("room.stakeProgressLeft", {
+                confirmed,
+                total: realPlayers,
+                seconds: leftSec,
+              }),
             );
-            setInfoMessage(`Подтверждение ставки: ${confirmed}/${realPlayers}. Осталось ${leftSec} сек.`);
           } else {
-            setInfoMessage(`Подтверждение ставки: ${confirmed}/${realPlayers}.`);
+            setInfoMessage(
+              t("room.stakeProgress", {
+                confirmed,
+                total: realPlayers,
+              }),
+            );
           }
         }
         return;
@@ -230,7 +261,7 @@ export function GameRoomPage() {
       if (normalized.readyPlayers && normalized.readyPlayers >= normalized.maxPlayers && !normalized.matchId) {
         const creatorId = normalized.playerIds?.[0];
         const amCreator = creatorId === currentUserId;
-        setInfoMessage(amCreator ? "Все подтвердили. Нажмите «Начать»." : "Все подтвердили. Ждём запуска от создателя стола.");
+        setInfoMessage(amCreator ? t("room.readyAllCreator") : t("room.readyAllWaitCreator"));
       }
     });
 
@@ -238,14 +269,14 @@ export function GameRoomPage() {
       offRoomUpdate();
       wsClient.disconnect();
     };
-  }, [id, navigate, currentUserId]);
+  }, [currentUserId, id, navigate, t]);
 
   useEffect(() => {
     if (!id || !isWaitingStart) {
       return;
     }
     const interval = window.setInterval(() => {
-      void getRoom(id!)
+      void getRoom(id)
         .then((nextRoom: Room) => {
           setRooms([nextRoom]);
           if (nextRoom.matchId) {
@@ -263,36 +294,36 @@ export function GameRoomPage() {
         <Link className="icon-button" to="/play">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Комната</h1>
+        <h1 className="page-header__title">{t("room.title")}</h1>
         <div className="page-header__spacer" />
       </div>
-      <p className="screen__subtitle">Перед стартом подтвердите участие в игре.</p>
+      <p className="screen__subtitle">{t("room.subtitle")}</p>
 
       {isLoading && <CardSkeleton rows={4} />}
 
       {error && (
         <ErrorStateBlock
-          title="Комната недоступна"
+          title={t("room.unavailableTitle")}
           message={error}
-          actionLabel="Вернуться в игры"
+          actionLabel={t("room.unavailableAction")}
           onAction={() => navigate("/play")}
         />
       )}
 
       {!isLoading && !error && !room && (
         <EmptyStateBlock
-          title="Комната не найдена"
-          message="Возможно, стол уже завершен или был удален."
-          actionLabel="К списку игр"
+          title={t("room.notFoundTitle")}
+          message={t("room.notFoundMessage")}
+          actionLabel={t("room.notFoundAction")}
           onAction={() => navigate("/play")}
         />
       )}
 
       {room && room.status === "cancelled" && (
         <EmptyStateBlock
-          title="Комната отменена"
-          message="Игра не состоялась. Создайте новую или выберите другую комнату."
-          actionLabel="К списку игр"
+          title={t("room.cancelledTitle")}
+          message={t("room.cancelledMessage")}
+          actionLabel={t("room.cancelledAction")}
           onAction={() => navigate("/play")}
         />
       )}
@@ -309,50 +340,58 @@ export function GameRoomPage() {
             </div>
             <div className="room-card__title">{room.title}</div>
             <div className="room-card__meta">
-              <span>{room.mode}</span>
-              <span>{room.deck} карт</span>
+              <span>{formatModeLabel(room.mode, t)}</span>
+              <span>
+                {room.deck} {t("common.cards")}
+              </span>
             </div>
           </AppCard>
 
           <AppCard>
-            <div className="card__label">Условия</div>
-            <div className="card__hint">Тестовый режим: игра без списаний и выплат.</div>
-            <div className="card__hint">Сначала оба подтверждают, затем создатель стола нажимает «Начать».</div>
+            <div className="card__label">{t("room.conditions")}</div>
+            <div className="card__hint">{t("room.testModeHint")}</div>
+            <div className="card__hint">{t("room.flowHint")}</div>
             <div className="card__hint">
-              Готовы: {room.readyPlayers ?? 0}/{room.players}
+              {t("room.readyLabel", {
+                ready: room.readyPlayers ?? 0,
+                players: room.players,
+              })}
             </div>
             {(room.status === "awaiting_stake_confirm" || (room.stakeConfirmedPlayers ?? 0) > 0) && (
               <div className="card__hint">
-                Подтверждение ставки: {room.stakeConfirmedPlayers ?? 0}/{realPlayersCount}
+                {t("room.stakeLabel", {
+                  confirmed: room.stakeConfirmedPlayers ?? 0,
+                  players: realPlayersCount,
+                })}
               </div>
             )}
             {room.status === "awaiting_stake_confirm" && stakeConfirmDeadlineLabel && (
-              <div className="card__hint">Дедлайн подтверждения: {stakeConfirmDeadlineLabel}</div>
+              <div className="card__hint">{t("room.stakeDeadline", { time: stakeConfirmDeadlineLabel })}</div>
             )}
           </AppCard>
 
           <AppCard>
-            <div className="card__label">Пригласить</div>
+            <div className="card__label">{t("room.invite")}</div>
             <AppButton
               type="button"
               variant="ghost"
               onClick={async () => {
                 const botUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot";
                 const url = `https://t.me/${botUsername}/app?startapp=room_${id ?? ""}`;
-                const text = `Присоединяйся к игре в дурака: ${room.title}`;
+                const text = t("room.inviteText", { title: room.title });
                 try {
                   await navigator.share({ title: "Дурак Онлайн", text, url });
                   hapticNotification("success");
-                  setInfoMessage("Приглашение отправлено");
+                  setInfoMessage(t("room.inviteSent"));
                 } catch {
                   await navigator.clipboard.writeText(url);
-                  setInfoMessage("Ссылка скопирована");
+                  setInfoMessage(t("room.linkCopied"));
                   hapticNotification("success");
-                  setInfoMessage("Ссылка скопирована");
+                  setInfoMessage(t("room.linkCopied"));
                 }
               }}
             >
-              {"share" in navigator ? "Поделиться" : "Скопировать ссылку"}
+              {"share" in navigator ? t("common.share") : t("common.copyLink")}
             </AppButton>
           </AppCard>
 
@@ -368,10 +407,10 @@ export function GameRoomPage() {
                 disabled={isReadyLoading || !canConfirmStake}
               >
                 {isReadyLoading
-                  ? "Подтверждаем ставку..."
+                  ? t("room.button.stakeLoading")
                   : isCurrentUserStakeConfirmed
-                    ? "Ставка подтверждена"
-                    : "Подтвердить ставку"}
+                    ? t("room.button.stakeDone")
+                    : t("room.button.stakeConfirm")}
               </AppButton>
             ) : (
               <AppButton
@@ -383,11 +422,15 @@ export function GameRoomPage() {
                 }}
                 disabled={isReadyLoading || !canConfirm}
               >
-                {isReadyLoading ? "Подключаем..." : isCurrentUserConfirmed ? "Подтверждено" : "Подтвердить"}
+                {isReadyLoading
+                  ? t("room.button.readyLoading")
+                  : isCurrentUserConfirmed
+                    ? t("room.button.readyDone")
+                    : t("room.button.readyConfirm")}
               </AppButton>
             )}
             {room.status === "awaiting_stake_confirm" && !allStakeConfirmed && (
-              <div className="card__hint">Ожидаем подтверждение ставки от всех игроков.</div>
+              <div className="card__hint">{t("room.waitStakeAll")}</div>
             )}
             {canStart && (
               <AppButton
@@ -399,14 +442,14 @@ export function GameRoomPage() {
                 }}
                 disabled={isStartLoading}
               >
-                {isStartLoading ? "Запускаем..." : "Начать"}
+                {isStartLoading ? t("room.button.startLoading") : t("room.button.start")}
               </AppButton>
             )}
             <AppButton type="button" onClick={() => setIsLeaveModalOpen(true)}>
-              Покинуть комнату
+              {t("room.button.leave")}
             </AppButton>
             <Link className="button" to="/play">
-              Вернуться в список
+              {t("room.button.backToList")}
             </Link>
           </div>
         </>
@@ -414,14 +457,16 @@ export function GameRoomPage() {
 
       <ConfirmModal
         isOpen={isLeaveModalOpen}
-        title="Покинуть комнату?"
-        message="Другие игроки не смогут начать игру без вас."
-        confirmLabel="Покинуть"
+        title={t("room.leaveModal.title")}
+        message={t("room.leaveModal.message")}
+        confirmLabel={t("room.leaveModal.confirm")}
         onConfirm={() => {
           if (!id) return;
           setIsLeaveModalOpen(false);
           wsClient.disconnect();
-          void leaveRoom(id).then(() => navigate("/play")).catch(() => navigate("/play"));
+          void leaveRoom(id)
+            .then(() => navigate("/play"))
+            .catch(() => navigate("/play"));
         }}
         onCancel={() => setIsLeaveModalOpen(false)}
       />

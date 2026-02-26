@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "@/app/App";
 import { ErrorBoundary } from "@/shared/ui/ErrorBoundary";
 import { ThemeProvider } from "@/shared/providers/ThemeProvider";
+import { LanguageProvider } from "@/shared/providers/LanguageProvider";
 import "@/styles/tokens.css";
 import "@/styles/global.css";
 
@@ -16,9 +17,11 @@ if (!rootEl) {
       <React.StrictMode>
         <ErrorBoundary>
           <ThemeProvider>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
+            <LanguageProvider>
+              <BrowserRouter>
+                <App />
+              </BrowserRouter>
+            </LanguageProvider>
           </ThemeProvider>
         </ErrorBoundary>
       </React.StrictMode>,

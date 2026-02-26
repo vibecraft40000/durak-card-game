@@ -1,30 +1,23 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getProfile, patchProfileLanguage } from "@/shared/api/user";
+import { patchProfileLanguage } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 
 type LanguageCode = "ru" | "uk";
 
-const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string }> = [
-  { code: "ru", label: "Русский" },
-  { code: "uk", label: "Украинский" },
-];
-
-function normalizeLanguage(value: string | undefined): LanguageCode {
-  return value === "uk" ? "uk" : "ru";
-}
-
 export function LanguagePage() {
-  const [language, setLanguage] = useState<LanguageCode>("ru");
+  const { language, setLanguage, t, syncLanguageFromProfile } = useLanguage();
   const [savingCode, setSavingCode] = useState<LanguageCode | null>(null);
 
   useEffect(() => {
-    void getProfile()
-      .then((response) => {
-        setLanguage(normalizeLanguage(response.user.language));
-      })
-      .catch(() => undefined);
-  }, []);
+    void syncLanguageFromProfile();
+  }, [syncLanguageFromProfile]);
+
+  const languageOptions: Array<{ code: LanguageCode; label: string }> = [
+    { code: "ru", label: t("language.ru") },
+    { code: "uk", label: t("language.uk") },
+  ];
 
   async function handleSelect(nextLanguage: LanguageCode) {
     if (nextLanguage === language || savingCode) {
@@ -50,12 +43,12 @@ export function LanguagePage() {
         <Link className="icon-button" to="/profile/settings">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">Язык</h1>
+        <h1 className="page-header__title">{t("language.title")}</h1>
         <div className="page-header__spacer" />
       </div>
 
       <div className="card list">
-        {LANGUAGE_OPTIONS.map((item) => (
+        {languageOptions.map((item) => (
           <button
             key={item.code}
             className={`menu-item menu-item--choice ${language === item.code ? "menu-item--active" : ""}`}

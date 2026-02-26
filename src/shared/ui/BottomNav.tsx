@@ -1,16 +1,19 @@
-﻿import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router-dom";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { PlayIcon, PlusIcon, UserIcon } from "@/shared/ui/Icons";
 
-const NAV_ITEMS = [
-  { to: "/play", label: "Играть", icon: PlayIcon, end: true },
-  { to: "/play/create", label: "Создать игру", icon: PlusIcon, end: false },
-  { to: "/profile", label: "Профиль", icon: UserIcon, end: false },
-];
-
 export function BottomNav() {
+  const { t } = useLanguage();
+
+  const navItems = [
+    { to: "/play", label: t("nav.play"), icon: PlayIcon, end: true },
+    { to: "/play/create", label: t("nav.createGame"), icon: PlusIcon, end: false },
+    { to: "/profile", label: t("nav.profile"), icon: UserIcon, end: false },
+  ];
+
   return (
     <nav className="bottom-nav bottom-nav--three">
-      {NAV_ITEMS.map((item) => (
+      {navItems.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}

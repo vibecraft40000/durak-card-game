@@ -1,9 +1,10 @@
-﻿import type { FormEvent } from "react";
+import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { CreateRoomInput, DeckSize, GameMode } from "@/entities/match/types";
 import { createRoom } from "@/shared/api/rooms";
 import { getProfile } from "@/shared/api/user";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, CheaterIcon } from "@/shared/ui/Icons";
 import { ErrorStateBlock } from "@/shared/ui/StateBlocks";
 import { AppCard } from "@/shared/ui/Card";
@@ -17,21 +18,6 @@ type StepMeta = {
   subtitle: string;
 };
 
-const STEP_META: Record<Step, StepMeta> = {
-  0: {
-    title: "Выберите ставку",
-    subtitle: "Укажите сумму ставки и проверьте доступный баланс.",
-  },
-  1: {
-    title: "Настройки игры",
-    subtitle: "Выберите колоду, количество игроков и тип игры.",
-  },
-  2: {
-    title: "Режим 'Шулер'",
-    subtitle: "Включите режим при необходимости и создайте игру.",
-  },
-};
-
 function modeToRoomMode(baseMode: GameMode, shulerEnabled: boolean): string {
   if (!shulerEnabled) {
     return baseMode;
@@ -41,6 +27,7 @@ function modeToRoomMode(baseMode: GameMode, shulerEnabled: boolean): string {
 
 export function CreateGamePage() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [step, setStep] = useState<Step>(0);
   const [stakeUsd, setStakeUsd] = useState(10);
   const [deck, setDeck] = useState<DeckSize>(36);
@@ -57,14 +44,34 @@ export function CreateGamePage() {
       .catch(() => undefined);
   }, []);
 
+  const stepMeta = useMemo<Record<Step, StepMeta>>(
+    () => ({
+      0: {
+        title: t("create.step0.title"),
+        subtitle: t("create.step0.subtitle"),
+      },
+      1: {
+        title: t("create.step1.title"),
+        subtitle: t("create.step1.subtitle"),
+      },
+      2: {
+        title: t("create.step2.title"),
+        subtitle: t("create.step2.subtitle"),
+      },
+    }),
+    [t],
+  );
+
   const mode = useMemo(() => modeToRoomMode(baseMode, shulerEnabled), [baseMode, shulerEnabled]);
+  const baseModeLabel = baseMode === "Подкидной" ? t("create.mode.podkidnoy") : t("create.mode.perevodnoy");
+  const modeLabel = shulerEnabled ? `${baseModeLabel} ${t("play.types.shuler")}` : baseModeLabel;
 
   const validationError = useMemo(() => {
     if (stakeUsd < 1 || stakeUsd > 500) {
-      return "Ставка должна быть в диапазоне 1-500 USD";
+      return t("create.error.range");
     }
     return null;
-  }, [stakeUsd]);
+  }, [stakeUsd, t]);
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -80,7 +87,7 @@ export function CreateGamePage() {
       mode,
       deck,
       maxPlayers,
-      title: `Стол $${stakeUsd}`,
+      title: t("create.tableTitle", { stake: stakeUsd }),
     };
 
     setIsSubmitting(true);
@@ -88,7 +95,7 @@ export function CreateGamePage() {
       const room = await createRoom(payload);
       navigate(`/room/${room.id}`);
     } catch {
-      setError("Не удалось создать игру. Проверьте подключение и повторите попытку.");
+      setError(t("create.error.failed"));
     } finally {
       setIsSubmitting(false);
     }
@@ -103,13 +110,13 @@ export function CreateGamePage() {
         <Link className="icon-button" to="/play">
           <BackIcon size={17} />
         </Link>
-        <h1 className="page-header__title">{STEP_META[step].title}</h1>
+        <h1 className="page-header__title">{stepMeta[step].title}</h1>
         <div className="page-header__spacer" />
       </div>
 
-      <p className="screen__subtitle">{STEP_META[step].subtitle}</p>
+      <p className="screen__subtitle">{stepMeta[step].subtitle}</p>
 
-      <div className="create-flow__progress" role="tablist" aria-label="Шаги создания игры">
+      <div className="create-flow__progress" role="tablist" aria-label={t("create.progressAria")}>
         {[0, 1, 2].map((index) => {
           const current = index as Step;
           const isActive = current === step;
@@ -122,7 +129,7 @@ export function CreateGamePage() {
               onClick={() => setStep(current)}
             >
               <span className="create-flow__step-index">{current + 1}</span>
-              <span className="create-flow__step-title">{STEP_META[current].title}</span>
+              <span className="create-flow__step-title">{stepMeta[current].title}</span>
             </button>
           );
         })}
@@ -133,7 +140,7 @@ export function CreateGamePage() {
           <>
             <AppCard className="card--compact">
               <div className="card__row">
-                <span>Текущая ставка</span>
+                <span>{t("create.currentStake")}</span>
                 <strong>${stakeUsd}</strong>
               </div>
               <input
@@ -159,11 +166,11 @@ export function CreateGamePage() {
 
             <AppCard className="card--compact">
               <div className="card__row">
-                <span>Ваш баланс</span>
+                <span>{t("create.balance")}</span>
                 <strong>{balance == null ? "—" : `$${balance.toFixed(2)}`}</strong>
               </div>
               {balance != null && balance < stakeUsd && (
-                <div className="card__hint card__hint--error">Недостаточно средств для текущей ставки.</div>
+                <div className="card__hint card__hint--error">{t("create.insufficientFunds")}</div>
               )}
             </AppCard>
           </>
@@ -172,7 +179,7 @@ export function CreateGamePage() {
         {step === 1 && (
           <>
             <div className="filter-group">
-              <span className="filter-group__label">Количество карт</span>
+              <span className="filter-group__label">{t("create.cardsCount")}</span>
               <div className="pill-group">
                 {[24, 36, 52].map((size) => (
                   <button
@@ -188,7 +195,7 @@ export function CreateGamePage() {
             </div>
 
             <div className="filter-group">
-              <span className="filter-group__label">Количество игроков</span>
+              <span className="filter-group__label">{t("create.playersCount")}</span>
               <div className="pill-group">
                 {[2, 3, 4].map((count) => (
                   <button
@@ -204,21 +211,21 @@ export function CreateGamePage() {
             </div>
 
             <div className="filter-group">
-              <span className="filter-group__label">Тип игры</span>
+              <span className="filter-group__label">{t("create.gameType")}</span>
               <div className="create-flow__mode-grid">
                 <button
                   type="button"
                   className={`filter-card ${baseMode === "Подкидной" ? "filter-card--active" : ""}`}
                   onClick={() => setBaseMode("Подкидной")}
                 >
-                  <span>Подкидной</span>
+                  <span>{t("create.mode.podkidnoy")}</span>
                 </button>
                 <button
                   type="button"
                   className={`filter-card ${baseMode === "Переводной" ? "filter-card--active" : ""}`}
                   onClick={() => setBaseMode("Переводной")}
                 >
-                  <span>Переводной</span>
+                  <span>{t("create.mode.perevodnoy")}</span>
                 </button>
               </div>
             </div>
@@ -231,7 +238,7 @@ export function CreateGamePage() {
               <div className="card__row">
                 <div className="create-flow__shuler-title">
                   <CheaterIcon size={18} />
-                  <span>Режим «Шулер»</span>
+                  <span>{t("create.shulerMode")}</span>
                 </div>
                 <button
                   type="button"
@@ -242,27 +249,29 @@ export function CreateGamePage() {
                   <span className="create-flow__switch-knob" />
                 </button>
               </div>
-              <div className="card__hint">При включении система фиксирует неверные ходы.</div>
+              <div className="card__hint">{t("create.shulerHint")}</div>
             </AppCard>
 
             <AppCard className="card--compact">
-              <div className="card__label">Параметры игры</div>
+              <div className="card__label">{t("create.summary")}</div>
               <div className="create-flow__summary">
                 <div className="card__row">
-                  <span>Ставка</span>
+                  <span>{t("create.summary.stake")}</span>
                   <strong>${stakeUsd}</strong>
                 </div>
                 <div className="card__row">
-                  <span>Колода</span>
-                  <strong>{deck} карт</strong>
+                  <span>{t("create.summary.deck")}</span>
+                  <strong>
+                    {deck} {t("common.cards")}
+                  </strong>
                 </div>
                 <div className="card__row">
-                  <span>Игроки</span>
+                  <span>{t("create.summary.players")}</span>
                   <strong>{maxPlayers}</strong>
                 </div>
                 <div className="card__row">
-                  <span>Режим</span>
-                  <strong>{mode}</strong>
+                  <span>{t("create.summary.mode")}</span>
+                  <strong>{modeLabel}</strong>
                 </div>
               </div>
             </AppCard>
@@ -271,7 +280,7 @@ export function CreateGamePage() {
 
         {(error || validationError) && (
           <ErrorStateBlock
-            title={validationError ? "Проверьте ставку" : "Не удалось создать игру"}
+            title={validationError ? t("create.error.checkStake") : t("create.error.title")}
             message={validationError ?? error ?? ""}
           />
         )}
@@ -283,7 +292,7 @@ export function CreateGamePage() {
               className="button"
               onClick={() => setStep((prev) => (prev - 1) as Step)}
             >
-              Назад
+              {t("common.back")}
             </button>
           )}
 
@@ -293,7 +302,7 @@ export function CreateGamePage() {
               className="button"
               onClick={() => setStep((prev) => (prev + 1) as Step)}
             >
-              Далее
+              {t("common.next")}
             </button>
           )}
 
@@ -302,7 +311,7 @@ export function CreateGamePage() {
             className="button button--primary create-game__submit"
             disabled={isSubmitting || !!validationError}
           >
-            {isSubmitting ? "Создаем..." : "Создать игру"}
+            {isSubmitting ? t("create.button.creating") : t("create.button.create")}
           </button>
         </div>
       </form>

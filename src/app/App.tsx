@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { initTelegramWebApp, getTelegramStartParam } from "@/shared/lib/telegram";
 import { bootstrapTelegramAuth } from "@/shared/api/auth";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { AppRoutes } from "@/app/routes";
 
 export function App() {
   const [authReady, setAuthReady] = useState(false);
   const [devAuth, setDevAuth] = useState(false);
   const navigate = useNavigate();
+  const { syncLanguageFromProfile, t } = useLanguage();
 
   useEffect(() => {
     initTelegramWebApp();
@@ -46,6 +48,13 @@ export function App() {
     }
   }, [navigate]);
 
+  useEffect(() => {
+    if (!authReady) {
+      return;
+    }
+    void syncLanguageFromProfile();
+  }, [authReady, syncLanguageFromProfile]);
+
   if (!authReady) {
     return (
       <div
@@ -58,7 +67,7 @@ export function App() {
           background: "var(--color-bg-primary, #010a1b)",
         }}
       >
-        Загрузка…
+        {t("app.loading")}
       </div>
     );
   }
