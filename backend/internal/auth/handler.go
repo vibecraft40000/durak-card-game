@@ -34,7 +34,7 @@ func (h *Handler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tgUser, hash, err := ValidateInitData(req.InitData, h.cfg.TelegramBotToken, h.cfg.AllowDevTelegramAuth, h.cfg.InitDataMaxAge, h.nowFunc())
+	tgUser, hash, referralCode, err := ValidateInitData(req.InitData, h.cfg.TelegramBotToken, h.cfg.AllowDevTelegramAuth, h.cfg.InitDataMaxAge, h.nowFunc())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -62,7 +62,7 @@ func (h *Handler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user, accessToken, refreshToken, err := h.service.ExchangeTelegram(r.Context(), tgUser)
+	user, accessToken, refreshToken, err := h.service.ExchangeTelegram(r.Context(), tgUser, referralCode)
 	if err != nil {
 		http.Error(w, "auth exchange failed", http.StatusInternalServerError)
 		return

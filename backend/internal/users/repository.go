@@ -278,3 +278,128 @@ func (r *Repository) SetBanned(ctx context.Context, id string, banned bool) erro
 	metrics.ObserveDBQuery("set_user_banned", start)
 	return err
 }
+
+func (r *Repository) BindInviterByReferralCode(ctx context.Context, userID, referralCode string) error {
+	referralCode = strings.TrimSpace(referralCode)
+	if referralCode == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := r.db.Exec(ctx, `
+UPDATE users target
+SET invited_by = inviter.id,
+    updated_at = NOW()
+FROM users inviter
+WHERE target.id = $1
+  AND target.invited_by IS NULL
+  AND lower(inviter.referral_code) = lower($2)
+  AND inviter.id <> target.id`, userID, referralCode)
+	metrics.ObserveDBQuery("bind_inviter_by_referral_code", start)
+	return err
+}
+
+type ReferralInvite struct {
+	UserID      string    `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	JoinedAt    time.Time `json:"joined_at"`
+	GamesPlayed int64     `json:"games_played"`
+	DepositsUSD float64   `json:"deposits_usd"`
+}
+
+type ReferralStats struct {
+	TotalInvited  int64            `json:"total_invited"`
+	ActiveInvited int64            `json:"active_invited"`
+	TotalGames    int64            `json:"total_games"`
+	TotalDeposits float64          `json:"total_deposits_usd"`
+	RecentInvites []ReferralInvite `json:"recent_invites"`
+}
+
+func (r *Repository) GetReferralStats(ctx context.Context, userID string, limit int) (ReferralStats, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	var stats ReferralStats
+	summaryQuery := `
+SELECT
+	COUNT(*)::bigint AS total_invited,
+	COUNT(*) FILTER (WHERE EXISTS (
+		SELECT 1 FROM game_results g WHERE g.user_id = u.id
+	))::bigint AS active_invited,
+	COALESCE(SUM((
+		SELECT COUNT(*)::bigint FROM game_results g WHERE g.user_id = u.id
+	)), 0)::bigint AS total_games,
+	COALESCE(SUM((
+		SELECT COALESCE(SUM(t.amount), 0)::float8
+		FROM transactions t
+		WHERE t.user_id = u.id
+		  AND t.type = 'deposit'
+		  AND t.status = 'confirmed'
+	)), 0)::float8 AS total_deposits_usd
+FROM users u
+WHERE u.invited_by = $1`
+	start := time.Now()
+	if err := r.db.QueryRow(ctx, summaryQuery, userID).Scan(
+		&stats.TotalInvited,
+		&stats.ActiveInvited,
+		&stats.TotalGames,
+		&stats.TotalDeposits,
+	); err != nil {
+		metrics.ObserveDBQuery("referral_stats_summary", start)
+		return ReferralStats{}, err
+	}
+	metrics.ObserveDBQuery("referral_stats_summary", start)
+
+	listQuery := `
+SELECT
+	u.id::text,
+	COALESCE(u.username, '') AS username,
+	COALESCE(u.display_name, '') AS display_name,
+	u.created_at,
+	COALESCE((
+		SELECT COUNT(*)::bigint FROM game_results g WHERE g.user_id = u.id
+	), 0)::bigint AS games_played,
+	COALESCE((
+		SELECT SUM(t.amount)::float8
+		FROM transactions t
+		WHERE t.user_id = u.id
+		  AND t.type = 'deposit'
+		  AND t.status = 'confirmed'
+	), 0)::float8 AS deposits_usd
+FROM users u
+WHERE u.invited_by = $1
+ORDER BY u.created_at DESC
+LIMIT $2`
+	start = time.Now()
+	rows, err := r.db.Query(ctx, listQuery, userID, limit)
+	metrics.ObserveDBQuery("referral_stats_list", start)
+	if err != nil {
+		return ReferralStats{}, err
+	}
+	defer rows.Close()
+
+	stats.RecentInvites = make([]ReferralInvite, 0, limit)
+	for rows.Next() {
+		var item ReferralInvite
+		if err := rows.Scan(
+			&item.UserID,
+			&item.Username,
+			&item.DisplayName,
+			&item.JoinedAt,
+			&item.GamesPlayed,
+			&item.DepositsUSD,
+		); err != nil {
+			return ReferralStats{}, err
+		}
+		stats.RecentInvites = append(stats.RecentInvites, item)
+	}
+	if err := rows.Err(); err != nil {
+		return ReferralStats{}, err
+	}
+	return stats, nil
+}

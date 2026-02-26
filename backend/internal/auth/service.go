@@ -42,7 +42,7 @@ func (s *Service) ReplayTTL() time.Duration {
 	return s.replayTTL
 }
 
-func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser) (users.User, string, string, error) {
+func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser, referralCode string) (users.User, string, string, error) {
 	photoURL := tgUser.PhotoURL
 	if photoURL == "" && s.botToken != "" {
 		photoURL = FetchUserPhotoURL(ctx, s.botToken, tgUser.ID)
@@ -50,6 +50,9 @@ func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser) (us
 	user, err := s.users.GetOrCreateByTelegram(ctx, tgUser.ID, tgUser.Username, tgUser.FirstName, tgUser.LastName, photoURL)
 	if err != nil {
 		return users.User{}, "", "", err
+	}
+	if referralCode != "" {
+		_ = s.users.BindInviterByReferralCode(ctx, user.ID, referralCode)
 	}
 
 	accessToken, err := s.issueJWT(user.ID, s.accessTTL)

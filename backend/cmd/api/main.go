@@ -522,6 +522,23 @@ func main() {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"items": items})
 		})
+		protected.Get("/api/referrals/summary", func(w http.ResponseWriter, r *http.Request) {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			stats, err := userRepo.GetReferralStats(r.Context(), user.ID, limit)
+			if err != nil {
+				http.Error(w, "failed to load referral stats", http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"referralCode": user.ReferralCode,
+				"stats":        stats,
+			})
+		})
 		protected.Get("/api/friends", friendsHandler.List)
 		protected.Get("/api/friends/requests", friendsHandler.Requests)
 		protected.Post("/api/friends/request", friendsHandler.Request)

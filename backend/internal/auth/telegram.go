@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var (
@@ -28,26 +29,26 @@ type TelegramUser struct {
 	PhotoURL  string `json:"photo_url"`
 }
 
-func ValidateInitData(rawInitData string, botToken string, allowDevAuth bool, maxAge time.Duration, now time.Time) (TelegramUser, string, error) {
+func ValidateInitData(rawInitData string, botToken string, allowDevAuth bool, maxAge time.Duration, now time.Time) (TelegramUser, string, string, error) {
 	values, err := url.ParseQuery(rawInitData)
 	if err != nil {
-		return TelegramUser{}, "", fmt.Errorf("parse initData: %w", err)
+		return TelegramUser{}, "", "", fmt.Errorf("parse initData: %w", err)
 	}
 
 	hash := values.Get("hash")
 	if hash == "" {
-		return TelegramUser{}, "", ErrMissingHash
+		return TelegramUser{}, "", "", ErrMissingHash
 	}
 	values.Del("hash")
 
 	authDateRaw := values.Get("auth_date")
 	authUnix, err := strconv.ParseInt(authDateRaw, 10, 64)
 	if err != nil {
-		return TelegramUser{}, "", fmt.Errorf("parse auth_date: %w", err)
+		return TelegramUser{}, "", "", fmt.Errorf("parse auth_date: %w", err)
 	}
 	authDate := time.Unix(authUnix, 0)
 	if now.Sub(authDate) > maxAge {
-		return TelegramUser{}, "", ErrExpiredAuthDate
+		return TelegramUser{}, "", "", ErrExpiredAuthDate
 	}
 
 	dataCheckString := buildDataCheckString(values)
@@ -57,7 +58,7 @@ func ValidateInitData(rawInitData string, botToken string, allowDevAuth bool, ma
 	computed := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(computed), []byte(hash)) {
 		if !(hash == "dev" && (botToken == "dev-bot-token" || allowDevAuth)) {
-			return TelegramUser{}, "", ErrInvalidSignature
+			return TelegramUser{}, "", "", ErrInvalidSignature
 		}
 	}
 
@@ -67,10 +68,11 @@ func ValidateInitData(rawInitData string, botToken string, allowDevAuth bool, ma
 
 	user, err := parseTelegramUser(values.Get("user"))
 	if err != nil {
-		return TelegramUser{}, "", err
+		return TelegramUser{}, "", "", err
 	}
+	referralCode := ExtractReferralCodeFromStartParam(values.Get("start_param"))
 
-	return user, computed, nil
+	return user, computed, referralCode, nil
 }
 
 func buildDataCheckString(values url.Values) string {
@@ -99,4 +101,31 @@ func parseTelegramUser(raw string) (TelegramUser, error) {
 		return TelegramUser{}, errors.New("telegram id missing")
 	}
 	return user, nil
+}
+
+func ExtractReferralCodeFromStartParam(startParam string) string {
+	value := strings.TrimSpace(startParam)
+	if value == "" {
+		return ""
+	}
+	lower := strings.ToLower(value)
+	switch {
+	case strings.HasPrefix(lower, "ref_"):
+		value = value[4:]
+	case strings.HasPrefix(lower, "ref-"):
+		value = value[4:]
+	default:
+		return ""
+	}
+	value = strings.TrimSpace(value)
+	if len(value) < 3 || len(value) > 64 {
+		return ""
+	}
+	for _, ch := range value {
+		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' || ch == '-' {
+			continue
+		}
+		return ""
+	}
+	return strings.ToLower(value)
 }

@@ -1,6 +1,7 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getFriends, removeFriend, type FriendEntry } from "@/shared/api/friends";
+import { getReferralSummary, type ReferralStats } from "@/shared/api/referrals";
 import { getProfile } from "@/shared/api/user";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, TrashIcon, UsersIcon } from "@/shared/ui/Icons";
@@ -36,17 +37,15 @@ export function FriendsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+
   const [refLink, setRefLink] = useState("https://t.me/your_bot?start=ref");
+  const [refStats, setRefStats] = useState<ReferralStats | null>(null);
+  const [referralError, setReferralError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     void loadFriends();
-    void getProfile()
-      .then((response) => {
-        const bot = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "your_bot";
-        const referralCode = response.user.referral_code ?? "ref";
-        setRefLink(`https://t.me/${bot}?start=ref_${referralCode}`);
-      })
-      .catch(() => undefined);
+    void loadReferralSummary();
   }, []);
 
   async function loadFriends() {
@@ -65,10 +64,42 @@ export function FriendsPage() {
     }
   }
 
+  async function loadReferralSummary() {
+    setReferralError(null);
+    const bot = import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "your_bot";
+    try {
+      const [profileResponse, referralSummary] = await Promise.all([
+        getProfile(),
+        getReferralSummary(20),
+      ]);
+      const referralCode = (referralSummary.referralCode || profileResponse.user.referral_code) ?? "ref";
+      setRefLink(`https://t.me/${bot}?start=ref_${referralCode}`);
+      setRefStats(referralSummary.stats);
+    } catch {
+      void getProfile()
+        .then((response) => {
+          const referralCode = response.user.referral_code ?? "ref";
+          setRefLink(`https://t.me/${bot}?start=ref_${referralCode}`);
+        })
+        .catch(() => undefined);
+      setReferralError(tr("Не удалось загрузить статистику рефералов.", "Не вдалося завантажити статистику рефералів."));
+    }
+  }
+
   const selectedFriend = useMemo(
     () => friends.find((friend) => otherUserId(friend) === selectedFriendId) ?? null,
     [friends, selectedFriendId],
   );
+
+  async function copyReferralLink() {
+    try {
+      await navigator.clipboard.writeText(refLink);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setReferralError(tr("Не удалось скопировать ссылку.", "Не вдалося скопіювати посилання."));
+    }
+  }
 
   return (
     <section className="screen friends-screen">
@@ -121,6 +152,55 @@ export function FriendsPage() {
       <div className="card card--compact">
         <div className="card__label">{tr("Реферальная ссылка", "Реферальне посилання")}</div>
         <div className="card__hint card__hint--mono">{refLink}</div>
+        <button type="button" className="button" onClick={() => void copyReferralLink()}>
+          {copied ? tr("Скопировано", "Скопійовано") : tr("Скопировать ссылку", "Скопіювати посилання")}
+        </button>
+      </div>
+
+      <div className="card card--compact">
+        <div className="card__label">{tr("Реферальная статистика", "Реферальна статистика")}</div>
+        {refStats ? (
+          <>
+            <div className="card__row">
+              <span>{tr("Приглашено", "Запрошено")}</span>
+              <strong>{refStats.total_invited}</strong>
+            </div>
+            <div className="card__row">
+              <span>{tr("Сыграли хотя бы 1 игру", "Зіграли хоча б 1 гру")}</span>
+              <strong>{refStats.active_invited}</strong>
+            </div>
+            <div className="card__row">
+              <span>{tr("Всего игр приглашенных", "Усього ігор запрошених")}</span>
+              <strong>{refStats.total_games}</strong>
+            </div>
+            <div className="card__row">
+              <span>{tr("Всего депозитов", "Усього депозитів")}</span>
+              <strong>{refStats.total_deposits_usd.toFixed(2)} USD</strong>
+            </div>
+
+            {refStats.recent_invites.length > 0 ? (
+              <div className="list">
+                {refStats.recent_invites.slice(0, 8).map((invite) => {
+                  const name =
+                    invite.display_name || (invite.username ? `@${invite.username}` : invite.user_id.slice(0, 8));
+                  return (
+                    <div key={invite.user_id} className="card__row">
+                      <span>{name}</span>
+                      <span className="card__hint">
+                        {invite.games_played} {tr("игр", "ігор")} · {invite.deposits_usd.toFixed(2)} USD
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="card__hint">{tr("Пока нет приглашенных пользователей.", "Поки немає запрошених користувачів.")}</div>
+            )}
+          </>
+        ) : (
+          <div className="card__hint">{tr("Загрузка...", "Завантаження...")}</div>
+        )}
+        {referralError && <div className="card__hint card__hint--error">{referralError}</div>}
       </div>
 
       <ConfirmModal
