@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-CREATE TYPE transaction_type AS ENUM ('deposit', 'withdraw', 'bet_hold', 'win', 'commission');
+CREATE TYPE transaction_type AS ENUM ('bet_hold', 'win', 'commission');
 CREATE TYPE transaction_status AS ENUM ('pending', 'confirmed', 'failed');
 
 CREATE TABLE IF NOT EXISTS transactions (

@@ -36,12 +36,9 @@ export function TransactionsPage() {
 
   const labels = useMemo(
     () => ({
-      deposit: tr("Ввод", "Поповнення"),
-      withdraw: tr("Вывод", "Виведення"),
       bet_hold: tr("Ставка", "Ставка"),
       win: tr("Выигрыш", "Виграш"),
       commission: tr("Комиссия", "Комісія"),
-      admin_adjust: tr("Корректировка", "Коригування"),
     }),
     [language],
   );
