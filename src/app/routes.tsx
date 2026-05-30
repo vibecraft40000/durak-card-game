@@ -49,8 +49,6 @@ const LobbyPage = lazyPage(() => import("@/pages/lobby/LobbyPage"), "LobbyPage")
 const PlayPage = lazyPage(() => import("@/pages/Play/PlayPage"), "PlayPage");
 const CreateGamePage = lazyPage(() => import("@/pages/create-game/CreateGamePage"), "CreateGamePage");
 const ProfilePage = lazyPage(() => import("@/pages/Profile/ProfilePage"), "ProfilePage");
-const DepositPage = lazyPage(() => import("@/pages/Profile/DepositPage"), "DepositPage");
-const WithdrawPage = lazyPage(() => import("@/pages/Profile/WithdrawPage"), "WithdrawPage");
 const GameRoomPage = lazyPage(() => import("@/pages/GameRoom/GameRoomPage"), "GameRoomPage");
 const GameTablePage = lazyPage(() => import("@/pages/game-table/GameTablePage"), "GameTablePage");
 const GameAddFriendsPage = lazyPage(() => import("@/pages/GameAddFriends/GameAddFriendsPage"), "GameAddFriendsPage");
@@ -58,7 +56,6 @@ const FinishWinPage = lazyPage(() => import("@/pages/FinishWin/FinishWinPage"), 
 const FinishLosePage = lazyPage(() => import("@/pages/FinishLose/FinishLosePage"), "FinishLosePage");
 const SettingsPage = lazyPage(() => import("@/pages/Settings/SettingsPage"), "SettingsPage");
 const NamePage = lazyPage(() => import("@/pages/Name/NamePage"), "NamePage");
-const CurrencyPage = lazyPage(() => import("@/pages/Currency/CurrencyPage"), "CurrencyPage");
 const LanguagePage = lazyPage(() => import("@/pages/Language/LanguagePage"), "LanguagePage");
 const FriendsPage = lazyPage(() => import("@/pages/Friends/FriendsPage"), "FriendsPage");
 const FriendsAddPage = lazyPage(() => import("@/pages/FriendsAdd/FriendsAddPage"), "FriendsAddPage");
@@ -77,8 +74,6 @@ export function AppRoutes() {
         <Route path="/play" element={renderLazyRoute(PlayPage)} />
         <Route path="/play/create" element={renderLazyRoute(CreateGamePage)} />
         <Route path="/profile" element={renderLazyRoute(ProfilePage)} />
-        <Route path="/profile/deposit" element={renderLazyRoute(DepositPage)} />
-        <Route path="/profile/withdraw" element={renderLazyRoute(WithdrawPage)} />
       </Route>
 
       <Route path="/create" element={<Navigate to="/play/create" replace />} />
@@ -91,7 +86,6 @@ export function AppRoutes() {
         <Route path="/finish/lose" element={renderLazyRoute(FinishLosePage)} />
         <Route path="/profile/settings" element={renderLazyRoute(SettingsPage)} />
         <Route path="/profile/settings/name" element={renderLazyRoute(NamePage)} />
-        <Route path="/profile/settings/currency" element={renderLazyRoute(CurrencyPage)} />
         <Route path="/profile/settings/language" element={renderLazyRoute(LanguagePage)} />
         <Route path="/profile/friends" element={renderLazyRoute(FriendsPage)} />
         <Route path="/profile/friends/add" element={renderLazyRoute(FriendsAddPage)} />

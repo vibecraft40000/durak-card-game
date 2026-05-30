@@ -17,7 +17,7 @@ func TestWSTicketIssueAndConsumeSingleUse(t *testing.T) {
 		_ = redisClient.Close()
 	})
 
-	service := NewService(nil, redisClient, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour, "")
+	service := NewService(nil, redisClient, "test-secret", 15*time.Minute, 24*time.Hour, "")
 	ticket, err := service.IssueWSTicket(context.Background(), "user-1", "room-1")
 	if err != nil {
 		t.Fatalf("issue ws ticket: %v", err)
@@ -52,7 +52,7 @@ func TestWSTicketConsumeRejectsWrongRoom(t *testing.T) {
 		_ = redisClient.Close()
 	})
 
-	service := NewService(nil, redisClient, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour, "")
+	service := NewService(nil, redisClient, "test-secret", 15*time.Minute, 24*time.Hour, "")
 	ticket, err := service.IssueWSTicket(context.Background(), "user-1", "room-1")
 	if err != nil {
 		t.Fatalf("issue ws ticket: %v", err)

@@ -16,12 +16,9 @@ import (
 	"time"
 
 	"durakonline/backend/internal/auth"
-	"durakonline/backend/internal/cryptopay"
 	"durakonline/backend/internal/friends"
 	"durakonline/backend/internal/games"
 	"durakonline/backend/internal/history"
-	"durakonline/backend/internal/money"
-	"durakonline/backend/internal/payments"
 	"durakonline/backend/internal/ratelimit"
 	"durakonline/backend/internal/rooms"
 	"durakonline/backend/internal/scheduler"
@@ -59,18 +56,11 @@ func main() {
 	}
 	defer log.Sync()
 
-	// Env sanity check
 	log.Info("env check",
 		zap.Bool("JWT_SECRET_loaded", len(os.Getenv("JWT_SECRET")) > 0),
 		zap.Bool("TELEGRAM_BOT_TOKEN_loaded", len(os.Getenv("TELEGRAM_BOT_TOKEN")) > 0),
 		zap.Bool("ALLOW_DEV_TELEGRAM_AUTH", os.Getenv("ALLOW_DEV_TELEGRAM_AUTH") == "true"),
 	)
-	if cfg.DisableMoney && cfg.Env == "production" {
-		log.Fatal("DISABLE_MONEY=true in production is not allowed - abort")
-	}
-	if cfg.DisableMoney {
-		log.Info("MODE: TEST (DISABLE_MONEY=true, HoldBet skipped)")
-	}
 
 	postgresPool, err := storage.NewPostgresPool(context.Background(), cfg.PostgresURL)
 	if err != nil {
@@ -97,54 +87,16 @@ func main() {
 
 	userRepo := users.NewRepository(postgresPool)
 	txRepo := transactions.NewRepository(postgresPool)
-	authService := auth.NewService(userRepo, redisClient, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.ReplayTTL, cfg.TelegramBotToken)
+	authService := auth.NewService(userRepo, redisClient, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.TelegramBotToken)
 	authHandler := auth.NewHandler(cfg, authService, log)
 
 	walletService := wallet.NewService(postgresPool, txRepo)
 	gamesService := games.NewService(postgresPool, redisClient, 25*time.Second, cfg.MatchStateTTL)
 	gamesService.SetDisconnectPolicy(games.NormalizeDisconnectPolicy(cfg.DisconnectPolicy))
 	roomsRepo := rooms.NewRepository(redisClient)
-	roomsService := rooms.NewService(roomsRepo, gamesService, walletService, cfg.CommissionBps, cfg.DisableMoney)
+	roomsService := rooms.NewService(roomsRepo, gamesService, walletService, cfg.CommissionBps, false)
 	roomsHandler := rooms.NewHandler(roomsService, log)
 	limiter := ratelimit.NewService(redisClient)
-	webappURL := cfg.AllowedOrigin
-	if webappURL == "*" {
-		webappURL = "https://your-domain.example"
-	}
-	paymentsRepo := payments.NewRepository(postgresPool)
-	converter, err := money.NewConverter(cfg.FXRatesUSDPerUnit)
-	if err != nil {
-		log.Warn("invalid FX_RATES_USD_PER_UNIT, fallback to defaults",
-			zap.String("raw", cfg.FXRatesUSDPerUnit),
-			zap.Error(err),
-		)
-		converter, _ = money.NewConverter(money.DefaultFXRatesUSDPerUnit)
-	}
-	cryptoPayHandler := cryptopay.NewHandler(cfg.CryptoPayAPIToken, cfg.CryptoPayTestnet, txRepo, redisClient, webappURL, log).
-		WithPaymentsRepo(paymentsRepo).
-		WithMoneyConverter(converter).
-		WithDepositsEnabled(cfg.CryptoPayEnabled).
-		WithWithdrawalsEnabled(cfg.WithdrawalsEnabled).
-		WithWithdrawFees(cfg.WithdrawCardFeeBps, cfg.WithdrawCryptoFeeBps)
-	if cfg.AdminNotifyTelegramIDs != "" && cfg.TelegramBotToken != "" {
-		var notifyIDs []int64
-		for _, s := range strings.Split(cfg.AdminNotifyTelegramIDs, ",") {
-			s = strings.TrimSpace(s)
-			if s == "" {
-				continue
-			}
-			var id int64
-			if _, err := fmt.Sscanf(s, "%d", &id); err == nil {
-				notifyIDs = append(notifyIDs, id)
-			}
-		}
-		if len(notifyIDs) > 0 {
-			cryptoPayHandler = cryptoPayHandler.WithNotifyOnWithdraw(cfg.TelegramBotToken, notifyIDs)
-		}
-	}
-	paymentsClient := payments.NewClient(cfg.WalletPayAPIKey)
-	paymentsService := payments.NewService(postgresPool, paymentsRepo, paymentsClient, txRepo)
-	paymentsHandler := payments.NewHandler(paymentsService, cfg.WalletPayAPIKey)
 
 	historyRepo := history.NewRepository(postgresPool)
 	historyService := history.NewService(historyRepo)
@@ -157,7 +109,7 @@ func main() {
 	friendsService := friends.NewService(friendsRepo, userRepo)
 	friendsHandler := friends.NewHandler(friendsService, userRepo, hub)
 
-	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter, redisClient, cfg.AllowedOrigin, cfg.WSSyncDiffSkipFinalState)
+	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, false, hub, bus, limiter, redisClient, cfg.AllowedOrigin, cfg.WSSyncDiffSkipFinalState)
 
 	router := chi.NewRouter()
 	router.Use(mw.RequestID)
@@ -167,28 +119,19 @@ func main() {
 	router.Use(jsonContentType)
 	router.Use(cors(cfg.AllowedOrigin))
 
-	router.Get("/health", healthHandler(postgresPool, redisClient, cfg))
-	router.Get("/healthz", healthHandler(postgresPool, redisClient, cfg))
+	router.Get("/health", healthHandler(postgresPool, redisClient))
+	router.Get("/healthz", healthHandler(postgresPool, redisClient))
 	router.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {
-		cryptoBotUsername := "CryptoBot"
-		if cfg.CryptoPayTestnet || strings.HasPrefix(cfg.CryptoPayAPIToken, "test") {
-			cryptoBotUsername = "CryptoTestnetBot"
-		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"depositProvider":    "cryptopay",
-			"depositsEnabled":    cryptoPayHandler.DepositsAvailable(),
-			"cryptoBotUsername":  cryptoBotUsername,
-			"walletPayEnabled":   cfg.WalletPayEnabled,
-			"withdrawalsEnabled": cryptoPayHandler.WithdrawalsAvailable(),
+			"status": "ok",
 		})
 	})
 	router.Get("/live", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
-	router.Get("/ready", healthHandler(postgresPool, redisClient, cfg))
+	router.Get("/ready", healthHandler(postgresPool, redisClient))
 	router.Handle("/metrics", metrics.Handler())
 
-	// Admin API (Flask/Telegram admin panel): X-Admin-Secret header required
 	if cfg.AdminSecret != "" {
 		adminSecret := cfg.AdminSecret
 		router.Get("/admin/stats", func(w http.ResponseWriter, r *http.Request) {
@@ -201,22 +144,11 @@ func main() {
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			stats, err := txRepo.GetAdminStats(r.Context())
-			if err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"users_count":          usersCount,
-				"games_total":          stats.GamesTotal,
-				"games_active":         stats.GamesActive,
-				"games_finished":       stats.GamesFinished,
-				"deposits_count":       stats.DepositsCount,
-				"deposits_amount":      stats.DepositsAmount,
-				"withdrawals_count":    stats.WithdrawalsCount,
-				"withdrawals_amount":   stats.WithdrawalsAmount,
-				"platform_fees_amount": stats.PlatformFeesAmount,
-				"admin_adjust_count":   stats.AdminAdjustCount,
+				"users_count":    usersCount,
+				"games_total":    0,
+				"games_active":   0,
+				"games_finished": 0,
 			})
 		})
 		router.Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
@@ -235,22 +167,6 @@ func main() {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"users": list, "total": total})
-		})
-		router.Get("/admin/withdrawals", func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("X-Admin-Secret") != adminSecret {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-			if limit <= 0 {
-				limit = 30
-			}
-			list, err := txRepo.ListWithdrawals(r.Context(), limit)
-			if err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"withdrawals": list})
 		})
 		router.Post("/admin/users/{id}/ban", func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Admin-Secret") != adminSecret {
@@ -304,63 +220,6 @@ func main() {
 			_ = txRepo.AddAdminAudit(r.Context(), actor, "unban", userID, nil, "")
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user_id": userID, "is_banned": false})
 		})
-		router.Post("/admin/users/{id}/balance-adjust", func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("X-Admin-Secret") != adminSecret {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			if !adminMoneyActionsAllowed() {
-				http.Error(w, "admin balance adjustment is disabled during beta", http.StatusForbidden)
-				return
-			}
-			actor := adminActorFromRequest(r)
-			if actor == "" {
-				http.Error(w, "admin actor required", http.StatusForbidden)
-				return
-			}
-			userID := chi.URLParam(r, "id")
-			if userID == "" {
-				http.Error(w, "user id required", http.StatusBadRequest)
-				return
-			}
-			if _, ok := userRepo.GetByID(r.Context(), userID); !ok {
-				http.Error(w, "user not found", http.StatusNotFound)
-				return
-			}
-			var req struct {
-				Amount float64 `json:"amount"`
-				Reason string  `json:"reason"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "invalid JSON body", http.StatusBadRequest)
-				return
-			}
-			if req.Amount == 0 {
-				http.Error(w, "amount must be non-zero", http.StatusBadRequest)
-				return
-			}
-			if req.Reason == "" {
-				req.Reason = "manual balance adjust"
-			}
-			if _, err := txRepo.Add(r.Context(), transactions.Transaction{
-				UserID: userID,
-				Type:   transactions.TypeAdminAdjust,
-				Amount: req.Amount,
-				Status: transactions.StatusConfirmed,
-			}); err != nil {
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
-			}
-			amount := req.Amount
-			_ = txRepo.AddAdminAudit(r.Context(), actor, "balance_adjust", userID, &amount, req.Reason)
-			balance, _ := txRepo.Balance(r.Context(), userID)
-			writeJSON(w, http.StatusOK, map[string]any{
-				"ok":      true,
-				"user_id": userID,
-				"amount":  req.Amount,
-				"balance": balance,
-			})
-		})
 		router.Get("/admin/logs", func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Admin-Secret") != adminSecret {
 				http.Error(w, "forbidden", http.StatusForbidden)
@@ -397,34 +256,6 @@ func main() {
 				"stake_confirm_deadline": room.StakeConfirmDeadline,
 				"match_id":               room.MatchID,
 			})
-		})
-		router.Post("/admin/rooms/{id}/stake/confirm", func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("X-Admin-Secret") != adminSecret {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			if !adminMoneyActionsAllowed() {
-				http.Error(w, "admin stake confirmation is disabled during beta", http.StatusForbidden)
-				return
-			}
-			roomID := chi.URLParam(r, "id")
-			var req struct {
-				UserID string `json:"user_id"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "invalid JSON body", http.StatusBadRequest)
-				return
-			}
-			if req.UserID == "" {
-				http.Error(w, "user_id is required", http.StatusBadRequest)
-				return
-			}
-			room, err := roomsService.ConfirmStake(r.Context(), roomID, req.UserID)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "room": room})
 		})
 	}
 
@@ -463,7 +294,6 @@ func main() {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"settings": map[string]any{
 					"displayName": user.DisplayName,
-					"currency":    user.Currency,
 				},
 				"user": user,
 			})
@@ -476,13 +306,12 @@ func main() {
 			}
 			var req struct {
 				DisplayName string `json:"displayName"`
-				Currency    string `json:"currency"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "invalid JSON body", http.StatusBadRequest)
 				return
 			}
-			updated, err := userRepo.UpdateSettings(r.Context(), user.ID, req.DisplayName, req.Currency)
+			updated, err := userRepo.UpdateSettings(r.Context(), user.ID, req.DisplayName)
 			if err != nil {
 				http.Error(w, "failed to update settings", http.StatusInternalServerError)
 				return
@@ -490,7 +319,6 @@ func main() {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"settings": map[string]any{
 					"displayName": updated.DisplayName,
-					"currency":    updated.Currency,
 				},
 				"user": updated,
 			})
@@ -592,34 +420,8 @@ func main() {
 		protected.Post("/api/rooms/{id}/stake/confirm", roomsHandler.ConfirmStake)
 		protected.Post("/api/rooms/{id}/start", roomsHandler.Start)
 		protected.Post("/api/rooms/{id}/leave", roomsHandler.Leave)
-		protected.Post("/api/deposit/create", rateLimit(log, limiter, "deposit_create", 6, time.Minute, func(r *http.Request) string {
-			user, ok := customMiddleware.UserFromContext(r.Context())
-			if !ok {
-				return ""
-			}
-			return user.ID
-		}, cryptoPayHandler.CreateDepositInvoice))
-		protected.Post("/api/withdraw/create", cryptoPayHandler.CreateWithdraw(walletService))
-		if cfg.WalletPayEnabled {
-			protected.Post("/api/payments/create", paymentsHandler.CreatePayment)
-		}
 		protected.Get("/api/history", historyHandler.List)
 		protected.Get("/api/history/calendar", historyHandler.Calendar)
-		protected.Get("/api/profile/transactions", func(w http.ResponseWriter, r *http.Request) {
-			user, ok := customMiddleware.UserFromContext(r.Context())
-			if !ok {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-			items, err := txRepo.ListByUser(r.Context(), user.ID, limit, offset)
-			if err != nil {
-				http.Error(w, "failed to load transactions", http.StatusInternalServerError)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"items": items})
-		})
 		protected.Get("/api/referrals/summary", func(w http.ResponseWriter, r *http.Request) {
 			user, ok := customMiddleware.UserFromContext(r.Context())
 			if !ok {
@@ -644,17 +446,6 @@ func main() {
 		protected.Post("/api/friends/remove", friendsHandler.Remove)
 	})
 
-	router.Post("/webhooks/cryptopay", cryptoPayHandler.Webhook)
-	walletWebhookPath := strings.TrimSpace(cfg.WalletPayWebhookPath)
-	if walletWebhookPath == "" {
-		walletWebhookPath = "/api/wallet/webhook"
-	}
-	if !strings.HasPrefix(walletWebhookPath, "/") {
-		walletWebhookPath = "/" + walletWebhookPath
-	}
-	if cfg.WalletPayEnabled {
-		router.Post(walletWebhookPath, paymentsHandler.Webhook)
-	}
 	router.Get("/ws", wsHandler.ServeWS)
 
 	server := &http.Server{
@@ -669,7 +460,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	go scheduler.RunMatchTimers(ctx, gamesService, roomsService, hub, wsHandler)
-	go scheduler.RunDisconnectTimeouts(ctx, gamesService, roomsService, hub, walletService, cfg.CommissionBps, cfg.DisableMoney)
+	go scheduler.RunDisconnectTimeouts(ctx, gamesService, roomsService, hub, walletService, cfg.CommissionBps, false)
 	go scheduler.RunRoomCleanup(ctx, roomsService, cfg.RoomWaitTimeout)
 	go scheduler.RunStakeConfirmationTimeouts(ctx, roomsService, hub)
 	go scheduler.RunActiveMatchesReconcile(ctx, gamesService)
@@ -752,7 +543,6 @@ func jsonContentType(next http.Handler) http.Handler {
 }
 
 func cors(allowedOrigins string) func(http.Handler) http.Handler {
-	// Support comma-separated list; browser allows only one value in Access-Control-Allow-Origin
 	origins := make(map[string]bool)
 	for _, o := range strings.Split(allowedOrigins, ",") {
 		o = strings.TrimSpace(o)
@@ -785,11 +575,7 @@ func cors(allowedOrigins string) func(http.Handler) http.Handler {
 	}
 }
 
-func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client, cfg config.Config) http.HandlerFunc {
-	mode := "money"
-	if cfg.DisableMoney {
-		mode = "test"
-	}
+func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -815,7 +601,6 @@ func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client, cfg config.Confi
 			"status":   status,
 			"postgres": pgStatus,
 			"redis":    redisStatus,
-			"mode":     mode,
 		})
 	}
 }
@@ -833,12 +618,6 @@ func requestIP(r *http.Request) string {
 		return ip
 	}
 	return host
-}
-
-func adminMoneyActionsAllowed() bool {
-	// Safe beta mode: money-changing admin actions remain disabled until
-	// a secure, actor-bound admin auth flow exists on the backend.
-	return false
 }
 
 func adminActorFromRequest(r *http.Request) string {

@@ -81,7 +81,6 @@ func TestValidate_AllowsProductionWithExplicitSecureConfig(t *testing.T) {
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvwxyz")
 	t.Setenv("ALLOWED_ORIGIN", "https://your-domain.example,https://staging.your-domain.example")
-	t.Setenv("CRYPTO_PAY_API_TOKEN", "replace-with-secure-token")
 
 	cfg := Load()
 	if err := cfg.Validate(); err != nil {
@@ -94,51 +93,4 @@ func TestValidate_AllowsProductionWithExplicitSecureConfig(t *testing.T) {
 
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
-}
-
-func TestValidate_FailsInProductionWithoutCryptoPayToken(t *testing.T) {
-	t.Setenv("ENV", "staging")
-	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
-	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvwxyz")
-	t.Setenv("ALLOWED_ORIGIN", "https://your-domain.example")
-
-	cfg := Load()
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() expected error when CRYPTO_PAY_API_TOKEN is missing")
-	}
-	if !contains(err.Error(), "CRYPTO_PAY_API_TOKEN must be set outside local development") {
-		t.Fatalf("Validate() error %q does not contain CRYPTO_PAY_API_TOKEN failure", err)
-	}
-}
-
-func TestValidate_FailsWhenWalletPayEnabledWithoutAPIKey(t *testing.T) {
-	t.Setenv("ENV", "staging")
-	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
-	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvwxyz")
-	t.Setenv("ALLOWED_ORIGIN", "https://your-domain.example")
-	t.Setenv("CRYPTO_PAY_API_TOKEN", "replace-with-secure-token")
-	t.Setenv("WALLET_PAY_ENABLED", "true")
-
-	cfg := Load()
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("Validate() expected error when WALLET_PAY_ENABLED=true without WALLET_PAY_API_KEY")
-	}
-	if !contains(err.Error(), "WALLET_PAY_API_KEY must be set when WALLET_PAY_ENABLED=true") {
-		t.Fatalf("Validate() error %q does not contain WALLET_PAY_API_KEY failure", err)
-	}
-}
-
-func TestValidate_AllowsProductionWithoutCryptoPayTokenWhenDisabled(t *testing.T) {
-	t.Setenv("ENV", "staging")
-	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
-	t.Setenv("TELEGRAM_BOT_TOKEN", "123456:abcdefghijklmnopqrstuvwxyz")
-	t.Setenv("ALLOWED_ORIGIN", "https://your-domain.example")
-	t.Setenv("CRYPTO_PAY_ENABLED", "false")
-
-	cfg := Load()
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() returned error when CRYPTO_PAY_ENABLED=false: %v", err)
-	}
 }

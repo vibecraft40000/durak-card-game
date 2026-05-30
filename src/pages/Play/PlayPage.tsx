@@ -2,10 +2,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import type { GameMode, Room } from "@/entities/match/types";
 import { getRooms } from "@/shared/api/rooms";
-import { getProfile } from "@/shared/api/user";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { AppCard } from "@/shared/ui/Card";
-import { AppButton } from "@/shared/ui/Button";
 import {
   ArrowRightThinIcon,
   CheckCircleIcon,
@@ -219,7 +217,6 @@ export function PlayPage() {
   const [joinRoomId, setJoinRoomId] = useState("");
   const [joinRoomError, setJoinRoomError] = useState<string | null>(null);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [balance, setBalance] = useState<number | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -228,19 +225,12 @@ export function PlayPage() {
   }, []);
 
   useEffect(() => {
-    // РђРІС‚РѕРѕР±РЅРѕРІР»РµРЅРёРµ СЃРїРёСЃРєР° РєРѕРјРЅР°С‚ РєР°Р¶РґС‹Рµ 5 СЃРµРєСѓРЅРґ
     const intervalId = window.setInterval(() => {
       void loadRooms();
     }, 5000);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, []);
-
-  useEffect(() => {
-    void getProfile()
-      .then((r) => setBalance(r.balance))
-      .catch(() => undefined);
   }, []);
 
   async function loadRooms(signal?: AbortSignal) {
@@ -332,21 +322,6 @@ export function PlayPage() {
       <section className="screen play-screen">
         <div className="play-screen__head">
           <h1 className="screen__title">{t("play.title")}</h1>
-          <div className="play-screen__head-balance">
-            <div className="play-screen__head-balance-main">
-              <span className="play-screen__head-balance-symbol">$</span>
-              <span className="play-screen__head-balance-amount">
-                {balance === null ? "вЂ”" : balance.toFixed(0)}
-              </span>
-            </div>
-            <AppButton
-              type="button"
-              className="play-screen__head-balance-add"
-              onClick={() => navigate("/profile/deposit")}
-            >
-              +
-            </AppButton>
-          </div>
         </div>
 
       {isFilterOpen ? (

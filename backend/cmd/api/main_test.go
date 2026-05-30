@@ -6,12 +6,6 @@ import (
 	"testing"
 )
 
-func TestAdminMoneyActionsAllowedIsDisabledInBeta(t *testing.T) {
-	if adminMoneyActionsAllowed() {
-		t.Fatal("expected admin money actions to be disabled in beta")
-	}
-}
-
 func TestAdminActorFromRequest(t *testing.T) {
 	req := httptest.NewRequest("GET", "/admin/users", nil)
 	req.Header.Set("X-Admin-Actor", "  alice\tadmin \n 42  ")

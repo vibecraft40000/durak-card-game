@@ -6,14 +6,12 @@ export type ReferralInvite = {
   display_name: string;
   joined_at: string;
   games_played: number;
-  deposits_usd: number;
 };
 
 export type ReferralStats = {
   total_invited: number;
   active_invited: number;
   total_games: number;
-  total_deposits_usd: number;
   recent_invites: ReferralInvite[];
 };
 

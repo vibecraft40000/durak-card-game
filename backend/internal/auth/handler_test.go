@@ -12,15 +12,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func TestReplayKeyFormat(t *testing.T) {
-	key := replayKey("abc")
-	if key != "auth:replay:abc" {
-		t.Fatalf("unexpected replay key: %s", key)
-	}
-}
-
 func TestJWT_RoundTrip(t *testing.T) {
-	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour, "")
+	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, "")
 	token, err := service.issueJWT("user-1", time.Minute)
 	if err != nil {
 		t.Fatalf("issue jwt failed: %v", err)
@@ -35,7 +28,7 @@ func TestJWT_RoundTrip(t *testing.T) {
 }
 
 func TestJWT_RejectsUnexpectedSigningMethod(t *testing.T) {
-	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, time.Hour, "")
+	service := NewService(nil, nil, "test-secret", 15*time.Minute, 24*time.Hour, "")
 	claims := jwt.MapClaims{
 		"sub": "user-1",
 		"exp": time.Now().Add(time.Minute).Unix(),

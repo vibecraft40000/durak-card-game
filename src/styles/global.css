@@ -967,26 +967,6 @@ input[type="range"] {
   cursor: not-allowed;
 }
 
-.button--deposit {
-  background: var(--color-btn-deposit);
-  border-color: rgba(34, 197, 94, 0.5);
-  color: #fff;
-}
-
-.button--deposit:hover {
-  background: var(--color-btn-deposit-hover);
-}
-
-.button--withdraw {
-  background: var(--color-btn-withdraw);
-  border-color: rgba(248, 113, 113, 0.5);
-  color: #fff;
-}
-
-.button--withdraw:hover {
-  background: var(--color-btn-withdraw-hover);
-}
-
 .icon-button {
   width: var(--icon-button-size);
   height: var(--icon-button-size);

@@ -17,13 +17,10 @@ type Config struct {
 	RedisURL                 string
 	TelegramBotToken         string
 	AllowDevTelegramAuth     bool
-	StrictInitDataReplay     bool
-	DisableMoney             bool
 	JWTSecret                string
 	AccessTokenTTL           time.Duration
 	RefreshTokenTTL          time.Duration
 	InitDataMaxAge           time.Duration
-	ReplayTTL                time.Duration
 	MatchStateTTL            time.Duration
 	RoomWaitTimeout          time.Duration
 	DisconnectPolicy         string
@@ -31,18 +28,7 @@ type Config struct {
 	CommissionBps            int
 	AllowedOrigin            string
 	Env                      string
-	CryptoPayEnabled         bool
-	CryptoPayAPIToken        string
-	CryptoPayTestnet         bool
-	FXRatesUSDPerUnit        string
-	WithdrawalsEnabled       bool
-	WithdrawCardFeeBps       int
-	WithdrawCryptoFeeBps     int
-	WalletPayEnabled         bool
-	WalletPayAPIKey          string
-	WalletPayWebhookPath     string
 	AdminSecret              string
-	AdminNotifyTelegramIDs   string
 	RequiredChannelID        string
 	SubscriptionChannelLink  string
 	envExplicit              bool
@@ -57,31 +43,17 @@ func Load() Config {
 		RedisURL:                 getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		TelegramBotToken:         getEnv("TELEGRAM_BOT_TOKEN", "dev-bot-token"),
 		AllowDevTelegramAuth:     getBool("ALLOW_DEV_TELEGRAM_AUTH", false),
-		StrictInitDataReplay:     getBool("STRICT_INITDATA_REPLAY", false),
-		DisableMoney:             getBool("DISABLE_MONEY", false),
 		JWTSecret:                getEnv("JWT_SECRET", "dev-secret"),
 		AccessTokenTTL:           getDuration("JWT_ACCESS_TTL", 15*time.Minute),
 		RefreshTokenTTL:          getDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
 		InitDataMaxAge:           getDuration("TELEGRAM_INIT_MAX_AGE", 24*time.Hour),
-		ReplayTTL:                getDuration("AUTH_REPLAY_TTL", 24*time.Hour),
 		MatchStateTTL:            getDuration("MATCH_STATE_TTL", 2*time.Hour),
 		RoomWaitTimeout:          getDuration("ROOM_WAIT_TIMEOUT", 5*time.Minute),
 		DisconnectPolicy:         getEnv("DISCONNECT_POLICY", "abandon"),
 		WSSyncDiffSkipFinalState: getBool("WS_SYNC_DIFF_SKIP_FINAL_STATE", false),
 		CommissionBps:            getInt("COMMISSION_BPS", 300),
 		AllowedOrigin:            getEnv("ALLOWED_ORIGIN", "*"),
-		CryptoPayEnabled:         getBool("CRYPTO_PAY_ENABLED", true),
-		CryptoPayAPIToken:        getEnv("CRYPTO_PAY_API_TOKEN", ""),
-		CryptoPayTestnet:         getBool("CRYPTO_PAY_TESTNET", false),
-		FXRatesUSDPerUnit:        getEnv("FX_RATES_USD_PER_UNIT", "USD:1,USDT:1,UAH:0.024,RUB:0.011,EUR:1.08"),
-		WithdrawalsEnabled:       getBool("WITHDRAWALS_ENABLED", false),
-		WithdrawCardFeeBps:       getInt("WITHDRAW_FEE_CARD_BPS", 200),
-		WithdrawCryptoFeeBps:     getInt("WITHDRAW_FEE_CRYPTO_BPS", 0),
-		WalletPayEnabled:         getBool("WALLET_PAY_ENABLED", false),
-		WalletPayAPIKey:          getEnv("WALLET_PAY_API_KEY", ""),
-		WalletPayWebhookPath:     getEnv("WALLET_PAY_WEBHOOK_PATH", "/api/wallet/webhook"),
 		AdminSecret:              getEnv("ADMIN_SECRET", ""),
-		AdminNotifyTelegramIDs:   getEnv("ADMIN_NOTIFY_TELEGRAM_IDS", ""),
 		RequiredChannelID:        getEnv("REQUIRED_CHANNEL_ID", ""),
 		SubscriptionChannelLink:  getEnv("SUBSCRIPTION_CHANNEL_LINK", ""),
 		Env:                      canonicalEnv(env),
@@ -117,12 +89,6 @@ func (c Config) Validate() error {
 	}
 	if err := validateAllowedOrigin(c.AllowedOrigin); err != nil {
 		errs = append(errs, fmt.Errorf("ALLOWED_ORIGIN %w", err))
-	}
-	if c.CryptoPayEnabled && strings.TrimSpace(c.CryptoPayAPIToken) == "" {
-		errs = append(errs, errors.New("CRYPTO_PAY_API_TOKEN must be set outside local development"))
-	}
-	if c.WalletPayEnabled && strings.TrimSpace(c.WalletPayAPIKey) == "" {
-		errs = append(errs, errors.New("WALLET_PAY_API_KEY must be set when WALLET_PAY_ENABLED=true"))
 	}
 
 	return errors.Join(errs...)

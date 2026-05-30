@@ -60,7 +60,7 @@ func newWSContractEnv(t *testing.T, turnTTL time.Duration) *wsContractEnv {
 	limiter := ratelimit.NewService(redisClient)
 
 	const jwtSecret = "ws-contract-test-secret"
-	authSvc := auth.NewService(usersRepo, redisClient, jwtSecret, time.Hour, 24*time.Hour, time.Minute, "")
+	authSvc := auth.NewService(usersRepo, redisClient, jwtSecret, time.Hour, 24*time.Hour, "")
 	hub := ws.NewHub()
 	handler := ws.NewHandler(authSvc, roomsSvc, gamesSvc, nil, usersRepo, 300, true, hub, nil, limiter, redisClient, "*", false)
 
@@ -798,7 +798,7 @@ func TestWSReconnectReplaySurvivesHandlerRestart(t *testing.T) {
 
 	hubRestarted := ws.NewHub()
 	defer hubRestarted.Drain(200 * time.Millisecond)
-	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, time.Minute, "")
+	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, "")
 	limiterRestarted := ratelimit.NewService(env.redis)
 	handlerRestarted := ws.NewHandler(authRestarted, env.roomsSvc, env.gamesSvc, nil, env.usersRepo, 300, true, hubRestarted, nil, limiterRestarted, env.redis, "*", false)
 	mux := http.NewServeMux()
@@ -998,7 +998,7 @@ func TestWSReconnectSnapshotIncludesTailReplayWhenFullReplayUnavailable(t *testi
 
 	hubRestarted := ws.NewHub()
 	defer hubRestarted.Drain(200 * time.Millisecond)
-	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, time.Minute, "")
+	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, "")
 	limiterRestarted := ratelimit.NewService(env.redis)
 	handlerRestarted := ws.NewHandler(authRestarted, env.roomsSvc, env.gamesSvc, nil, env.usersRepo, 300, true, hubRestarted, nil, limiterRestarted, env.redis, "*", false)
 	mux := http.NewServeMux()
@@ -1162,7 +1162,7 @@ func TestWSReconnectSnapshotWithoutReplayEmitsStateDiff(t *testing.T) {
 
 	hubRestarted := ws.NewHub()
 	defer hubRestarted.Drain(200 * time.Millisecond)
-	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, time.Minute, "")
+	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, "")
 	limiterRestarted := ratelimit.NewService(env.redis)
 	handlerRestarted := ws.NewHandler(authRestarted, env.roomsSvc, env.gamesSvc, nil, env.usersRepo, 300, true, hubRestarted, nil, limiterRestarted, env.redis, "*", false)
 	mux := http.NewServeMux()
@@ -1325,7 +1325,7 @@ func TestWSReconnectSnapshotCanSkipFinalGameStateForDiffCapableClient(t *testing
 
 	hubRestarted := ws.NewHub()
 	defer hubRestarted.Drain(200 * time.Millisecond)
-	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, time.Minute, "")
+	authRestarted := auth.NewService(env.usersRepo, env.redis, env.jwtSecret, time.Hour, 24*time.Hour, "")
 	limiterRestarted := ratelimit.NewService(env.redis)
 	handlerRestarted := ws.NewHandler(authRestarted, env.roomsSvc, env.gamesSvc, nil, env.usersRepo, 300, true, hubRestarted, nil, limiterRestarted, env.redis, "*", true)
 	mux := http.NewServeMux()

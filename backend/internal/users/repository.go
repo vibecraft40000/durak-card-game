@@ -18,7 +18,6 @@ type User struct {
 	LastName     string    `json:"last_name"`
 	PhotoURL     string    `json:"photo_url"`
 	DisplayName  string    `json:"display_name"`
-	Currency     string    `json:"currency"`
 	Language     string    `json:"language"`
 	ReferralCode string    `json:"referral_code"`
 	InvitedBy    *string   `json:"invited_by,omitempty"`
@@ -58,9 +57,8 @@ DO UPDATE SET
     photo_url = EXCLUDED.photo_url,
     display_name = EXCLUDED.display_name,
     updated_at = NOW()
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
 
-	// Ник = Имя Фамилия (не @username), обновляется при каждом входе
 	displayName := strings.TrimSpace(firstName + " " + lastName)
 	if displayName == "" {
 		displayName = "Игрок"
@@ -76,7 +74,6 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 		&user.LastName,
 		&user.PhotoURL,
 		&user.DisplayName,
-		&user.Currency,
 		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
@@ -115,7 +112,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users WHERE id=$1`
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users WHERE id=$1`
 	var user User
 	start := time.Now()
 	err := r.db.QueryRow(ctx, query, id).Scan(
@@ -126,7 +123,6 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 		&user.LastName,
 		&user.PhotoURL,
 		&user.DisplayName,
-		&user.Currency,
 		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
@@ -141,7 +137,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (User, bool) {
 	return user, true
 }
 
-func (r *Repository) UpdateSettings(ctx context.Context, id, displayName, currency string) (User, error) {
+func (r *Repository) UpdateSettings(ctx context.Context, id, displayName string) (User, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
@@ -149,14 +145,13 @@ func (r *Repository) UpdateSettings(ctx context.Context, id, displayName, curren
 UPDATE users
 SET
     display_name = COALESCE(NULLIF($2, ''), display_name),
-    currency = COALESCE(NULLIF($3, ''), currency),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
 
 	var user User
 	start := time.Now()
-	err := r.db.QueryRow(ctx, query, id, displayName, currency).Scan(
+	err := r.db.QueryRow(ctx, query, id, displayName).Scan(
 		&user.ID,
 		&user.TelegramID,
 		&user.Username,
@@ -164,7 +159,6 @@ RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_n
 		&user.LastName,
 		&user.PhotoURL,
 		&user.DisplayName,
-		&user.Currency,
 		&user.Language,
 		&user.ReferralCode,
 		&user.InvitedBy,
@@ -190,12 +184,12 @@ func (r *Repository) UpdateLanguage(ctx context.Context, id, language string) (U
 		language = "ru"
 	}
 	query := `UPDATE users SET language = $2, updated_at = NOW() WHERE id = $1
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, language, referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, language, referral_code, invited_by, created_at, updated_at`
 	var user User
 	start := time.Now()
 	err := r.db.QueryRow(ctx, query, id, language).Scan(
 		&user.ID, &user.TelegramID, &user.Username, &user.FirstName, &user.LastName,
-		&user.PhotoURL, &user.DisplayName, &user.Currency, &user.Language,
+		&user.PhotoURL, &user.DisplayName, &user.Language,
 		&user.ReferralCode, &user.InvitedBy, &user.CreatedAt, &user.UpdatedAt,
 	)
 	metrics.ObserveDBQuery("update_user_language", start)
@@ -209,12 +203,12 @@ func (r *Repository) UpdatePhotoURL(ctx context.Context, id, photoURL string) (U
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	query := `UPDATE users SET photo_url = $2, updated_at = NOW() WHERE id = $1
-RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
+RETURNING id, telegram_id, username, first_name, last_name, photo_url, display_name, COALESCE(language, 'ru'), referral_code, invited_by, created_at, updated_at`
 	var user User
 	start := time.Now()
 	err := r.db.QueryRow(ctx, query, id, photoURL).Scan(
 		&user.ID, &user.TelegramID, &user.Username, &user.FirstName, &user.LastName,
-		&user.PhotoURL, &user.DisplayName, &user.Currency, &user.Language,
+		&user.PhotoURL, &user.DisplayName, &user.Language,
 		&user.ReferralCode, &user.InvitedBy, &user.CreatedAt, &user.UpdatedAt,
 	)
 	metrics.ObserveDBQuery("update_user_photo_url", start)
@@ -252,7 +246,7 @@ func (r *Repository) ListPaginated(ctx context.Context, offset, limit int) ([]Us
 	if err != nil {
 		return nil, 0, err
 	}
-	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, currency, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	query := `SELECT id, telegram_id, username, first_name, last_name, photo_url, display_name, COALESCE(language, 'ru'), referral_code, invited_by, COALESCE(is_banned, false), created_at, updated_at FROM users ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 	rows, err := r.db.Query(ctx, query, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -261,7 +255,7 @@ func (r *Repository) ListPaginated(ctx context.Context, offset, limit int) ([]Us
 	var list []User
 	for rows.Next() {
 		var u User
-		err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.PhotoURL, &u.DisplayName, &u.Currency, &u.Language, &u.ReferralCode, &u.InvitedBy, &u.IsBanned, &u.CreatedAt, &u.UpdatedAt)
+		err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FirstName, &u.LastName, &u.PhotoURL, &u.DisplayName, &u.Language, &u.ReferralCode, &u.InvitedBy, &u.IsBanned, &u.CreatedAt, &u.UpdatedAt)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -306,14 +300,12 @@ type ReferralInvite struct {
 	DisplayName string    `json:"display_name"`
 	JoinedAt    time.Time `json:"joined_at"`
 	GamesPlayed int64     `json:"games_played"`
-	DepositsUSD float64   `json:"deposits_usd"`
 }
 
 type ReferralStats struct {
 	TotalInvited  int64            `json:"total_invited"`
 	ActiveInvited int64            `json:"active_invited"`
 	TotalGames    int64            `json:"total_games"`
-	TotalDeposits float64          `json:"total_deposits_usd"`
 	RecentInvites []ReferralInvite `json:"recent_invites"`
 }
 
@@ -333,14 +325,7 @@ SELECT
 	))::bigint AS active_invited,
 	COALESCE(SUM((
 		SELECT COUNT(*)::bigint FROM game_results g WHERE g.user_id = u.id
-	)), 0)::bigint AS total_games,
-	COALESCE(SUM((
-		SELECT COALESCE(SUM(t.amount), 0)::float8
-		FROM transactions t
-		WHERE t.user_id = u.id
-		  AND t.type = 'deposit'
-		  AND t.status = 'confirmed'
-	)), 0)::float8 AS total_deposits_usd
+	)), 0)::bigint AS total_games
 FROM users u
 WHERE u.invited_by = $1`
 	start := time.Now()
@@ -348,7 +333,6 @@ WHERE u.invited_by = $1`
 		&stats.TotalInvited,
 		&stats.ActiveInvited,
 		&stats.TotalGames,
-		&stats.TotalDeposits,
 	); err != nil {
 		metrics.ObserveDBQuery("referral_stats_summary", start)
 		return ReferralStats{}, err
@@ -363,14 +347,7 @@ SELECT
 	u.created_at,
 	COALESCE((
 		SELECT COUNT(*)::bigint FROM game_results g WHERE g.user_id = u.id
-	), 0)::bigint AS games_played,
-	COALESCE((
-		SELECT SUM(t.amount)::float8
-		FROM transactions t
-		WHERE t.user_id = u.id
-		  AND t.type = 'deposit'
-		  AND t.status = 'confirmed'
-	), 0)::float8 AS deposits_usd
+	), 0)::bigint AS games_played
 FROM users u
 WHERE u.invited_by = $1
 ORDER BY u.created_at DESC
@@ -392,7 +369,6 @@ LIMIT $2`
 			&item.DisplayName,
 			&item.JoinedAt,
 			&item.GamesPlayed,
-			&item.DepositsUSD,
 		); err != nil {
 			return ReferralStats{}, err
 		}

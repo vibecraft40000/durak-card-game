@@ -15,6 +15,7 @@ import (
 	"durakonline/backend/internal/transactions"
 	"durakonline/backend/internal/users"
 	"durakonline/backend/internal/wallet"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -53,16 +54,7 @@ func TestPublicBetaLongMatchSeriesMoneyInvariants(t *testing.T) {
 			roomsSvc := rooms.NewService(roomsRepo, gamesSvc, walletSvc, 300, false)
 
 			seriesUsers := createSeriesUsers(t, ctx, usersRepo, tc.players)
-			for _, user := range seriesUsers {
-				if _, err := txRepo.Add(ctx, transactions.Transaction{
-					UserID: user.ID,
-					Type:   transactions.TypeDeposit,
-					Amount: 5000,
-					Status: transactions.StatusConfirmed,
-				}); err != nil {
-					t.Fatalf("seed deposit for %s: %v", user.ID, err)
-				}
-			}
+			seedBalance(t, ctx, pg, seriesUsers, 5000)
 
 			playerIDs := make([]string, 0, len(seriesUsers))
 			for _, user := range seriesUsers {
@@ -400,6 +392,19 @@ func sumBalancesCents(t *testing.T, ctx context.Context, walletSvc *wallet.Servi
 		total += invariantCents(balance)
 	}
 	return total
+}
+
+func seedBalance(t *testing.T, ctx context.Context, db *pgxpool.Pool, users []users.User, amount float64) {
+	t.Helper()
+	for _, u := range users {
+		_, err := db.Exec(ctx, `
+INSERT INTO transactions (id, user_id, type, amount, status, created_at)
+VALUES ($1, $2, 'bet_hold_release', $3, 'confirmed', NOW())`,
+			uuid.NewString(), u.ID, amount)
+		if err != nil {
+			t.Fatalf("seed balance for %s: %v", u.ID, err)
+		}
+	}
 }
 
 func invariantCents(amount float64) int64 {

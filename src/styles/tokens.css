@@ -24,11 +24,7 @@
   --color-accent: #808aff;
   --color-accent-soft: #808aff;
   --color-chip-active: linear-gradient(180deg, rgba(128, 138, 255, 1) 0%, rgba(77, 83, 153, 1) 100%);
-  --color-bg-radial: rgba(128, 138, 255, 0.25);
-  --color-btn-deposit: linear-gradient(180deg, #52d97a 0%, #2bc559 100%);
-  --color-btn-deposit-hover: linear-gradient(180deg, #45c96b 0%, #22a84a 100%);
-  --color-btn-withdraw: linear-gradient(180deg, #f0a0a0 0%, #e87878 100%);
-  --color-btn-withdraw-hover: linear-gradient(180deg, #e87878 0%, #dc5252 100%);
+	--color-bg-radial: rgba(128, 138, 255, 0.25);
 
   /* Spacing (4px grid) */
   --space-4: 4px;
@@ -119,12 +115,8 @@
   --color-border-accent: #6b75e8;
   --color-border-input: rgba(107, 117, 232, 0.3);
   --color-chip-active: linear-gradient(180deg, #6b75e8 0%, #4d53a5 100%);
-  --color-bg-radial: rgba(107, 117, 232, 0.12);
-  --color-success: #0fa84a;
-  --color-btn-deposit: linear-gradient(180deg, #5ee96b 0%, #2ecc71 100%);
-  --color-btn-deposit-hover: linear-gradient(180deg, #4dd85c 0%, #27ae60 100%);
-  --color-btn-withdraw: linear-gradient(180deg, #f8b4b4 0%, #f08080 100%);
-  --color-btn-withdraw-hover: linear-gradient(180deg, #f08080 0%, #e74c3c 100%);
+	--color-bg-radial: rgba(107, 117, 232, 0.12);
+	--color-success: #0fa84a;
 
   /* Light theme table */
   --color-table-felt: linear-gradient(135deg, #2d5a3f 0%, #1e3d2b 50%, #163024 100%);

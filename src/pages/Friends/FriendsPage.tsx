@@ -207,11 +207,6 @@ export function FriendsPage() {
               <span>{tr("Всего игр приглашенных", "Усього ігор запрошених")}</span>
               <strong>{refStats.total_games}</strong>
             </div>
-            <div className="card__row">
-              <span>{tr("Всего депозитов", "Усього депозитів")}</span>
-              <strong>{refStats.total_deposits_usd.toFixed(2)} USD</strong>
-            </div>
-
             {refStats.recent_invites.length > 0 ? (
               <div className="list">
                 {refStats.recent_invites.slice(0, 8).map((invite) => {
@@ -221,7 +216,7 @@ export function FriendsPage() {
                     <div key={invite.user_id} className="card__row">
                       <span>{name}</span>
                       <span className="card__hint">
-                        {invite.games_played} {tr("игр", "ігор")} · {invite.deposits_usd.toFixed(2)} USD
+                        {invite.games_played} {tr("игр", "ігор")}
                       </span>
                     </div>
                   );

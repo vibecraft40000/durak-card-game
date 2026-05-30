@@ -3,9 +3,9 @@ package wallet
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
-	"durakonline/backend/internal/money"
 	"durakonline/backend/internal/transactions"
 	"durakonline/backend/pkg/metrics"
 	"github.com/jackc/pgx/v5"
@@ -68,7 +68,7 @@ WHERE user_id = $1
 		return tx.Commit(ctx)
 	}
 
-	releaseAmount := money.Round2(-heldNet)
+	releaseAmount := round2(-heldNet)
 	start = time.Now()
 	_, err = tx.Exec(ctx, `
 INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
@@ -131,9 +131,9 @@ func (s *Service) SettleWin(ctx context.Context, winnerID, matchID string, pot f
 
 // SettleWinInTx performs wallet settlement within an existing transaction. Caller must commit/rollback.
 func (s *Service) SettleWinInTx(ctx context.Context, tx pgx.Tx, winnerID, matchID string, pot float64, commissionBps int) error {
-	pot = money.Round2(pot)
-	commission := money.Round2(pot * float64(commissionBps) / 10000.0)
-	winAmount := money.Round2(pot - commission)
+	pot = round2(pot)
+	commission := round2(pot * float64(commissionBps) / 10000.0)
+	winAmount := round2(pot - commission)
 	start := time.Now()
 	tag, err := tx.Exec(ctx, `
 INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
@@ -168,9 +168,9 @@ func (s *Service) settleOnce(ctx context.Context, winnerID, matchID string, pot 
 	}
 	defer tx.Rollback(ctx)
 
-	pot = money.Round2(pot)
-	commission := money.Round2(pot * float64(commissionBps) / 10000.0)
-	winAmount := money.Round2(pot - commission)
+	pot = round2(pot)
+	commission := round2(pot * float64(commissionBps) / 10000.0)
+	winAmount := round2(pot - commission)
 
 	start := time.Now()
 	tag, err := tx.Exec(ctx, `
@@ -203,6 +203,10 @@ ON CONFLICT (match_id) DO NOTHING`, matchID, pot, commissionBps, commission)
 	}
 	metrics.IncSettlement("success")
 	return nil
+}
+
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 func isRetryableTxErr(err error) bool {

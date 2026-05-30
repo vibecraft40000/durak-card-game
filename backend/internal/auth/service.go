@@ -27,29 +27,23 @@ type wsTicketClaims struct {
 }
 
 type Service struct {
-	users      *users.Repository
+	usersRepo  *users.Repository
 	redis      *redis.Client
 	jwtSecret  []byte
 	accessTTL  time.Duration
 	refreshTTL time.Duration
-	replayTTL  time.Duration
 	botToken   string
 }
 
-func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL, replayTTL time.Duration, botToken string) *Service {
+func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecret string, accessTTL, refreshTTL time.Duration, botToken string) *Service {
 	return &Service{
-		users:      usersRepo,
+		usersRepo:  usersRepo,
 		redis:      redisClient,
 		jwtSecret:  []byte(jwtSecret),
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
-		replayTTL:  replayTTL,
 		botToken:   botToken,
 	}
-}
-
-func (s *Service) ReplayTTL() time.Duration {
-	return s.replayTTL
 }
 
 func (s *Service) WSTicketTTL() time.Duration {
@@ -61,12 +55,12 @@ func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser, ref
 	if photoURL == "" && s.botToken != "" {
 		photoURL = FetchUserPhotoURL(ctx, s.botToken, tgUser.ID)
 	}
-	user, err := s.users.GetOrCreateByTelegram(ctx, tgUser.ID, tgUser.Username, tgUser.FirstName, tgUser.LastName, photoURL)
+	user, err := s.usersRepo.GetOrCreateByTelegram(ctx, tgUser.ID, tgUser.Username, tgUser.FirstName, tgUser.LastName, photoURL)
 	if err != nil {
 		return users.User{}, "", "", err
 	}
 	if referralCode != "" {
-		_ = s.users.BindInviterByReferralCode(ctx, user.ID, referralCode)
+		_ = s.usersRepo.BindInviterByReferralCode(ctx, user.ID, referralCode)
 	}
 
 	accessToken, err := s.issueJWT(user.ID, s.accessTTL)
@@ -95,17 +89,6 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (string, err
 	return s.issueJWT(userID, s.accessTTL)
 }
 
-func (s *Service) MarkInitDataHashUsed(ctx context.Context, hash string) (bool, error) {
-	key := replayKey(hash)
-	start := time.Now()
-	ok, err := s.redis.SetNX(ctx, key, "1", s.replayTTL).Result()
-	metrics.ObserveRedisLatency("setnx_replay_hash", start)
-	if err != nil {
-		return false, err
-	}
-	return ok, nil
-}
-
 func (s *Service) issueJWT(userID string, ttl time.Duration) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": userID,
@@ -114,10 +97,6 @@ func (s *Service) issueJWT(userID string, ttl time.Duration) (string, error) {
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(s.jwtSecret)
-}
-
-func replayKey(hash string) string {
-	return fmt.Sprintf("auth:replay:%s", hash)
 }
 
 func refreshKey(token string) string {

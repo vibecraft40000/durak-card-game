@@ -71,24 +71,6 @@ func (h *Handler) TelegramAuth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Optional strict replay protection (single-use initData hashes).
-	// Disabled by default because Telegram clients can reuse initData in one session.
-	if h.cfg.StrictInitDataReplay {
-		ok, markErr := h.service.MarkInitDataHashUsed(r.Context(), hash)
-		if !(h.cfg.AllowDevTelegramAuth && hash == "dev") {
-			if markErr != nil {
-				requestLog.Error("telegram auth: replay storage failed", zap.Error(markErr))
-				httpapi.WriteError(w, r, http.StatusInternalServerError, "replay_storage_error", "replay storage error", nil)
-				return
-			}
-			if !ok {
-				requestLog.Warn("telegram auth: replay attack detected")
-				httpapi.WriteError(w, r, http.StatusUnauthorized, "replay_attack_detected", "replay attack detected", nil)
-				return
-			}
-		}
-	}
-
 	user, accessToken, refreshToken, err := h.service.ExchangeTelegram(r.Context(), tgUser, referralCode)
 	if err != nil {
 		requestLog.Error("telegram auth: exchange failed", zap.Error(err))

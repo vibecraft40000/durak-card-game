@@ -39,8 +39,7 @@ func TestMatchLifecycle(t *testing.T) {
 
 	u1, _ := usersRepo.GetOrCreateByTelegram(ctx, 101, "u1", "User", "One", "")
 	u2, _ := usersRepo.GetOrCreateByTelegram(ctx, 102, "u2", "User", "Two", "")
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u1.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u2.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
+	seedBalance(t, ctx, pg, []users.User{u1, u2}, 100)
 
 	room, err := roomsSvc.Create(ctx, "table", 10, 2, 36, "Подкидной", u1.ID)
 	if err != nil {
@@ -226,8 +225,7 @@ func TestPendingStartReconcileCompensatesHoldAndAllowsRetry(t *testing.T) {
 
 	u1, _ := usersRepo.GetOrCreateByTelegram(ctx, 401, "reco1", "Reco", "One", "")
 	u2, _ := usersRepo.GetOrCreateByTelegram(ctx, 402, "reco2", "Reco", "Two", "")
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u1.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u2.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
+	seedBalance(t, ctx, pg, []users.User{u1, u2}, 100)
 
 	room, err := roomsSvc.Create(ctx, "reconcile-room", 10, 2, 36, "classic", u1.ID)
 	if err != nil {
@@ -321,8 +319,7 @@ func TestConfirmStakeIsIdempotentAfterMatchStart(t *testing.T) {
 
 	u1, _ := usersRepo.GetOrCreateByTelegram(ctx, 451, "stake1", "Stake", "One", "")
 	u2, _ := usersRepo.GetOrCreateByTelegram(ctx, 452, "stake2", "Stake", "Two", "")
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u1.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
-	_, _ = txRepo.Add(ctx, transactions.Transaction{UserID: u2.ID, Type: transactions.TypeDeposit, Amount: 100, Status: transactions.StatusConfirmed})
+	seedBalance(t, ctx, pg, []users.User{u1, u2}, 100)
 
 	room, err := roomsSvc.Create(ctx, "stake-room", 10, 2, 36, "classic", u1.ID)
 	if err != nil {
