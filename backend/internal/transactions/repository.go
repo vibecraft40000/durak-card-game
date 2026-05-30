@@ -13,12 +13,13 @@ type Type string
 type Status string
 
 const (
-	TypeDeposit     Type = "deposit"
-	TypeWithdraw    Type = "withdraw"
-	TypeBetHold     Type = "bet_hold"
-	TypeWin         Type = "win"
-	TypeCommission  Type = "commission"
-	TypeAdminAdjust Type = "admin_adjust"
+	TypeDeposit        Type = "deposit"
+	TypeWithdraw       Type = "withdraw"
+	TypeBetHold        Type = "bet_hold"
+	TypeBetHoldRelease Type = "bet_hold_release"
+	TypeWin            Type = "win"
+	TypeCommission     Type = "commission"
+	TypeAdminAdjust    Type = "admin_adjust"
 
 	StatusPending   Status = "pending"
 	StatusConfirmed Status = "confirmed"
@@ -322,6 +323,20 @@ FROM (
         ('match:' || g.match_id::text) AS details
     FROM game_results g
     LEFT JOIN users u ON u.id = g.user_id
+
+    UNION ALL
+
+    SELECT
+        'platform_fee' AS kind,
+        p.id::text AS id,
+        p.created_at AS created_at,
+        '' AS user_id,
+        '' AS username,
+        '' AS display_name,
+        'platform_commission' AS action,
+        p.commission_amount::float8 AS amount,
+        ('match:' || p.match_id::text || '; pot:' || p.gross_pot::text || '; commission_bps:' || p.commission_bps::text) AS details
+    FROM platform_fees p
 ) x
 ORDER BY created_at DESC
 LIMIT $1`
@@ -354,14 +369,15 @@ LIMIT $1`
 }
 
 type AdminStats struct {
-	GamesTotal        int64   `json:"games_total"`
-	GamesActive       int64   `json:"games_active"`
-	GamesFinished     int64   `json:"games_finished"`
-	DepositsCount     int64   `json:"deposits_count"`
-	DepositsAmount    float64 `json:"deposits_amount"`
-	WithdrawalsCount  int64   `json:"withdrawals_count"`
-	WithdrawalsAmount float64 `json:"withdrawals_amount"`
-	AdminAdjustCount  int64   `json:"admin_adjust_count"`
+	GamesTotal         int64   `json:"games_total"`
+	GamesActive        int64   `json:"games_active"`
+	GamesFinished      int64   `json:"games_finished"`
+	DepositsCount      int64   `json:"deposits_count"`
+	DepositsAmount     float64 `json:"deposits_amount"`
+	WithdrawalsCount   int64   `json:"withdrawals_count"`
+	WithdrawalsAmount  float64 `json:"withdrawals_amount"`
+	PlatformFeesAmount float64 `json:"platform_fees_amount"`
+	AdminAdjustCount   int64   `json:"admin_adjust_count"`
 }
 
 func (r *Repository) GetAdminStats(ctx context.Context) (AdminStats, error) {
@@ -377,6 +393,7 @@ SELECT
 	(SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE type = 'deposit' AND status = 'confirmed')::float8 AS deposits_amount,
 	(SELECT COUNT(*) FROM transactions WHERE type = 'withdraw' AND status = 'confirmed') AS withdrawals_count,
 	(SELECT COALESCE(-SUM(amount), 0) FROM transactions WHERE type = 'withdraw' AND status = 'confirmed')::float8 AS withdrawals_amount,
+	(SELECT COALESCE(SUM(commission_amount), 0) FROM platform_fees)::float8 AS platform_fees_amount,
 	(SELECT COUNT(*) FROM transactions WHERE type::text = 'admin_adjust' AND status = 'confirmed') AS admin_adjust_count`
 
 	var stats AdminStats
@@ -389,6 +406,7 @@ SELECT
 		&stats.DepositsAmount,
 		&stats.WithdrawalsCount,
 		&stats.WithdrawalsAmount,
+		&stats.PlatformFeesAmount,
 		&stats.AdminAdjustCount,
 	)
 	metrics.ObserveDBQuery("admin_stats", start)

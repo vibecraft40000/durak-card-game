@@ -24,8 +24,8 @@ export function FinishWinPage() {
   }, []);
 
   const myPayout =
-    currentUserId && matchResult?.payouts?.length
-      ? matchResult.payouts.find((p) => p.userId === currentUserId)?.amount ?? 0
+    currentUserId && matchResult?.netResults?.length
+      ? matchResult.netResults.find((p) => p.userId === currentUserId)?.amount ?? 0
       : 0;
 
   const displayAmount = useCountUp(myPayout, 800, true);
@@ -61,6 +61,7 @@ export function FinishWinPage() {
       >
         <div className="result-card__title">{tr("Игра завершена!", "Гру завершено!")}</div>
         <div className="result-card__message">{tr("Победа", "Перемога")}</div>
+        <div className="card__hint">{tr("Чистый результат матча", "Чистий результат матчу")}</div>
         <div className="result-card__amount result-card__amount--plus">{amountText}</div>
         <Link className="button button--primary" to="/play" onClick={() => hapticNotification("success")}>
           {tr("Продолжить", "Продовжити")}

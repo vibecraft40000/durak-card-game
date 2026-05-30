@@ -30,6 +30,7 @@ import (
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/internal/ws"
 	"durakonline/backend/pkg/config"
+	"durakonline/backend/pkg/httpapi"
 	"durakonline/backend/pkg/logger"
 	"durakonline/backend/pkg/metrics"
 	customMiddleware "durakonline/backend/pkg/middleware"
@@ -44,10 +45,14 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+	if err := loadDotEnvForLocalRuntime(); err != nil {
 		panic(err)
 	}
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "config validation failed:\n%v\n", err)
+		os.Exit(1)
+	}
 	log, err := logger.New()
 	if err != nil {
 		panic(err)
@@ -93,17 +98,18 @@ func main() {
 	userRepo := users.NewRepository(postgresPool)
 	txRepo := transactions.NewRepository(postgresPool)
 	authService := auth.NewService(userRepo, redisClient, cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, cfg.ReplayTTL, cfg.TelegramBotToken)
-	authHandler := auth.NewHandler(cfg, authService)
+	authHandler := auth.NewHandler(cfg, authService, log)
 
 	walletService := wallet.NewService(postgresPool, txRepo)
 	gamesService := games.NewService(postgresPool, redisClient, 25*time.Second, cfg.MatchStateTTL)
+	gamesService.SetDisconnectPolicy(games.NormalizeDisconnectPolicy(cfg.DisconnectPolicy))
 	roomsRepo := rooms.NewRepository(redisClient)
 	roomsService := rooms.NewService(roomsRepo, gamesService, walletService, cfg.CommissionBps, cfg.DisableMoney)
-	roomsHandler := rooms.NewHandler(roomsService)
+	roomsHandler := rooms.NewHandler(roomsService, log)
 	limiter := ratelimit.NewService(redisClient)
 	webappURL := cfg.AllowedOrigin
 	if webappURL == "*" {
-		webappURL = "https://durakonline.duckdns.org"
+		webappURL = "https://your-domain.example"
 	}
 	paymentsRepo := payments.NewRepository(postgresPool)
 	converter, err := money.NewConverter(cfg.FXRatesUSDPerUnit)
@@ -117,6 +123,8 @@ func main() {
 	cryptoPayHandler := cryptopay.NewHandler(cfg.CryptoPayAPIToken, cfg.CryptoPayTestnet, txRepo, redisClient, webappURL, log).
 		WithPaymentsRepo(paymentsRepo).
 		WithMoneyConverter(converter).
+		WithDepositsEnabled(cfg.CryptoPayEnabled).
+		WithWithdrawalsEnabled(cfg.WithdrawalsEnabled).
 		WithWithdrawFees(cfg.WithdrawCardFeeBps, cfg.WithdrawCryptoFeeBps)
 	if cfg.AdminNotifyTelegramIDs != "" && cfg.TelegramBotToken != "" {
 		var notifyIDs []int64
@@ -140,7 +148,7 @@ func main() {
 
 	historyRepo := history.NewRepository(postgresPool)
 	historyService := history.NewService(historyRepo)
-	historyHandler := history.NewHandler(historyService)
+	historyHandler := history.NewHandler(historyService, log)
 
 	hub := ws.NewHub()
 	bus := ws.NewBus(redisClient, instanceID)
@@ -149,7 +157,7 @@ func main() {
 	friendsService := friends.NewService(friendsRepo, userRepo)
 	friendsHandler := friends.NewHandler(friendsService, userRepo, hub)
 
-	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter, cfg.AllowedOrigin)
+	wsHandler := ws.NewHandler(authService, roomsService, gamesService, walletService, userRepo, cfg.CommissionBps, cfg.DisableMoney, hub, bus, limiter, redisClient, cfg.AllowedOrigin, cfg.WSSyncDiffSkipFinalState)
 
 	router := chi.NewRouter()
 	router.Use(mw.RequestID)
@@ -167,7 +175,11 @@ func main() {
 			cryptoBotUsername = "CryptoTestnetBot"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"cryptoBotUsername": cryptoBotUsername,
+			"depositProvider":    "cryptopay",
+			"depositsEnabled":    cryptoPayHandler.DepositsAvailable(),
+			"cryptoBotUsername":  cryptoBotUsername,
+			"walletPayEnabled":   cfg.WalletPayEnabled,
+			"withdrawalsEnabled": cryptoPayHandler.WithdrawalsAvailable(),
 		})
 	})
 	router.Get("/live", func(w http.ResponseWriter, r *http.Request) {
@@ -195,15 +207,16 @@ func main() {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"users_count":        usersCount,
-				"games_total":        stats.GamesTotal,
-				"games_active":       stats.GamesActive,
-				"games_finished":     stats.GamesFinished,
-				"deposits_count":     stats.DepositsCount,
-				"deposits_amount":    stats.DepositsAmount,
-				"withdrawals_count":  stats.WithdrawalsCount,
-				"withdrawals_amount": stats.WithdrawalsAmount,
-				"admin_adjust_count": stats.AdminAdjustCount,
+				"users_count":          usersCount,
+				"games_total":          stats.GamesTotal,
+				"games_active":         stats.GamesActive,
+				"games_finished":       stats.GamesFinished,
+				"deposits_count":       stats.DepositsCount,
+				"deposits_amount":      stats.DepositsAmount,
+				"withdrawals_count":    stats.WithdrawalsCount,
+				"withdrawals_amount":   stats.WithdrawalsAmount,
+				"platform_fees_amount": stats.PlatformFeesAmount,
+				"admin_adjust_count":   stats.AdminAdjustCount,
 			})
 		})
 		router.Get("/admin/users", func(w http.ResponseWriter, r *http.Request) {
@@ -244,6 +257,11 @@ func main() {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+			actor := adminActorFromRequest(r)
+			if actor == "" {
+				http.Error(w, "admin actor required", http.StatusForbidden)
+				return
+			}
 			userID := chi.URLParam(r, "id")
 			if userID == "" {
 				http.Error(w, "user id required", http.StatusBadRequest)
@@ -257,12 +275,17 @@ func main() {
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "ban", userID, nil, "")
+			_ = txRepo.AddAdminAudit(r.Context(), actor, "ban", userID, nil, "")
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user_id": userID, "is_banned": true})
 		})
 		router.Post("/admin/users/{id}/unban", func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Admin-Secret") != adminSecret {
 				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			actor := adminActorFromRequest(r)
+			if actor == "" {
+				http.Error(w, "admin actor required", http.StatusForbidden)
 				return
 			}
 			userID := chi.URLParam(r, "id")
@@ -278,12 +301,21 @@ func main() {
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
-			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "unban", userID, nil, "")
+			_ = txRepo.AddAdminAudit(r.Context(), actor, "unban", userID, nil, "")
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user_id": userID, "is_banned": false})
 		})
 		router.Post("/admin/users/{id}/balance-adjust", func(w http.ResponseWriter, r *http.Request) {
 			if r.Header.Get("X-Admin-Secret") != adminSecret {
 				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if !adminMoneyActionsAllowed() {
+				http.Error(w, "admin balance adjustment is disabled during beta", http.StatusForbidden)
+				return
+			}
+			actor := adminActorFromRequest(r)
+			if actor == "" {
+				http.Error(w, "admin actor required", http.StatusForbidden)
 				return
 			}
 			userID := chi.URLParam(r, "id")
@@ -320,7 +352,7 @@ func main() {
 				return
 			}
 			amount := req.Amount
-			_ = txRepo.AddAdminAudit(r.Context(), "admin_secret", "balance_adjust", userID, &amount, req.Reason)
+			_ = txRepo.AddAdminAudit(r.Context(), actor, "balance_adjust", userID, &amount, req.Reason)
 			balance, _ := txRepo.Balance(r.Context(), userID)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"ok":      true,
@@ -371,6 +403,10 @@ func main() {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
+			if !adminMoneyActionsAllowed() {
+				http.Error(w, "admin stake confirmation is disabled during beta", http.StatusForbidden)
+				return
+			}
 			roomID := chi.URLParam(r, "id")
 			var req struct {
 				UserID string `json:"user_id"`
@@ -392,13 +428,13 @@ func main() {
 		})
 	}
 
-	router.Post("/auth/telegram", rateLimit(limiter, "login", 10, time.Minute, func(r *http.Request) string {
+	router.Post("/auth/telegram", rateLimit(log, limiter, "login", 10, time.Minute, func(r *http.Request) string {
 		return requestIP(r)
 	}, authHandler.TelegramAuth))
 	router.Post("/auth/refresh", authHandler.Refresh)
 
 	router.Group(func(protected chi.Router) {
-		protected.Use(customMiddleware.AuthJWT(authService, userRepo))
+		protected.Use(customMiddleware.AuthJWT(authService, userRepo, log))
 		protected.Get("/api/profile", func(w http.ResponseWriter, r *http.Request) {
 			user, ok := customMiddleware.UserFromContext(r.Context())
 			if !ok {
@@ -499,10 +535,53 @@ func main() {
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"user": updated})
 		})
+		protected.Post("/api/ws-ticket", rateLimit(log, limiter, "ws_ticket", 30, time.Minute, func(r *http.Request) string {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				return ""
+			}
+			return user.ID
+		}, func(w http.ResponseWriter, r *http.Request) {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			var req struct {
+				RoomID string `json:"roomId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid JSON body", http.StatusBadRequest)
+				return
+			}
+			req.RoomID = strings.TrimSpace(req.RoomID)
+			if req.RoomID == "" {
+				http.Error(w, "roomId is required", http.StatusBadRequest)
+				return
+			}
+
+			ticket, err := authService.IssueWSTicket(r.Context(), user.ID, req.RoomID)
+			if err != nil {
+				http.Error(w, "failed to issue ws ticket", http.StatusInternalServerError)
+				return
+			}
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ticket":       ticket,
+				"expiresInSec": int(authService.WSTicketTTL().Seconds()),
+			})
+		}))
 		protected.Get("/api/rooms", roomsHandler.List)
 		protected.Get("/api/rooms/{id}", roomsHandler.Get)
-		protected.Post("/api/rooms", roomsHandler.Create)
-		protected.Post("/api/rooms/{id}/join", rateLimit(limiter, "join_room", 20, time.Minute, func(r *http.Request) string {
+		protected.Post("/api/rooms", rateLimit(log, limiter, "create_room", 10, time.Minute, func(r *http.Request) string {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				return ""
+			}
+			return user.ID
+		}, roomsHandler.Create))
+		protected.Post("/api/rooms/{id}/join", rateLimit(log, limiter, "join_room", 20, time.Minute, func(r *http.Request) string {
 			user, ok := customMiddleware.UserFromContext(r.Context())
 			if !ok {
 				return ""
@@ -513,9 +592,17 @@ func main() {
 		protected.Post("/api/rooms/{id}/stake/confirm", roomsHandler.ConfirmStake)
 		protected.Post("/api/rooms/{id}/start", roomsHandler.Start)
 		protected.Post("/api/rooms/{id}/leave", roomsHandler.Leave)
-		protected.Post("/api/deposit/create", cryptoPayHandler.CreateDepositInvoice)
+		protected.Post("/api/deposit/create", rateLimit(log, limiter, "deposit_create", 6, time.Minute, func(r *http.Request) string {
+			user, ok := customMiddleware.UserFromContext(r.Context())
+			if !ok {
+				return ""
+			}
+			return user.ID
+		}, cryptoPayHandler.CreateDepositInvoice))
 		protected.Post("/api/withdraw/create", cryptoPayHandler.CreateWithdraw(walletService))
-		protected.Post("/api/payments/create", paymentsHandler.CreatePayment)
+		if cfg.WalletPayEnabled {
+			protected.Post("/api/payments/create", paymentsHandler.CreatePayment)
+		}
 		protected.Get("/api/history", historyHandler.List)
 		protected.Get("/api/history/calendar", historyHandler.Calendar)
 		protected.Get("/api/profile/transactions", func(w http.ResponseWriter, r *http.Request) {
@@ -565,15 +652,18 @@ func main() {
 	if !strings.HasPrefix(walletWebhookPath, "/") {
 		walletWebhookPath = "/" + walletWebhookPath
 	}
-	router.Post(walletWebhookPath, paymentsHandler.Webhook)
+	if cfg.WalletPayEnabled {
+		router.Post(walletWebhookPath, paymentsHandler.Webhook)
+	}
 	router.Get("/ws", wsHandler.ServeWS)
 
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           ":" + cfg.Port,
+		Handler:        router,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   15 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -616,7 +706,19 @@ func main() {
 	}
 }
 
+func loadDotEnvForLocalRuntime() error {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("ENV")))
+	switch env {
+	case "development", "dev", "local", "test":
+		if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func rateLimit(
+	log *zap.Logger,
 	limiter *ratelimit.Service,
 	scope string,
 	limit int,
@@ -625,14 +727,17 @@ func rateLimit(
 	next http.HandlerFunc,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		requestLog := logger.WithRequest(log, r)
 		key := scope + ":" + keyFn(r)
 		allowed, err := limiter.Allow(r.Context(), key, limit, window)
 		if err != nil {
-			http.Error(w, "rate limiter error", http.StatusServiceUnavailable)
+			requestLog.Error("rate limit: limiter unavailable", zap.String("scope", scope), zap.Error(err))
+			httpapi.WriteError(w, r, http.StatusServiceUnavailable, "rate_limiter_error", "rate limiter error", nil)
 			return
 		}
 		if !allowed {
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			requestLog.Warn("rate limit: limit exceeded", zap.String("scope", scope))
+			httpapi.WriteError(w, r, http.StatusTooManyRequests, "rate_limit_exceeded", "too many requests", nil)
 			return
 		}
 		next(w, r)
@@ -716,9 +821,7 @@ func healthHandler(pg *pgxpool.Pool, redisClient *redis.Client, cfg config.Confi
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(payload)
+	httpapi.WriteJSON(w, statusCode, payload)
 }
 
 func requestIP(r *http.Request) string {
@@ -730,4 +833,25 @@ func requestIP(r *http.Request) string {
 		return ip
 	}
 	return host
+}
+
+func adminMoneyActionsAllowed() bool {
+	// Safe beta mode: money-changing admin actions remain disabled until
+	// a secure, actor-bound admin auth flow exists on the backend.
+	return false
+}
+
+func adminActorFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(r.Header.Get("X-Admin-Actor"))
+	if raw == "" {
+		return ""
+	}
+	actor := strings.Join(strings.Fields(raw), " ")
+	if len(actor) > 128 {
+		actor = actor[:128]
+	}
+	return actor
 }

@@ -1,4 +1,4 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Пользователи — Админка{% endblock %}
 {% block content %}
 <h1>Пользователи</h1>
@@ -42,6 +42,7 @@
         </td>
         <td>
           <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+            <input type="hidden" name="{{ csrf_field_name }}" value="{{ csrf_token() }}">
             <input type="hidden" name="user_id" value="{{ u.id }}">
             <input type="hidden" name="action" value="topup_usd">
             <input class="input-sm" type="number" step="0.01" min="0.01" name="amount" placeholder="USD" required>
@@ -52,6 +53,7 @@
 
         <td>
           <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+            <input type="hidden" name="{{ csrf_field_name }}" value="{{ csrf_token() }}">
             <input type="hidden" name="user_id" value="{{ u.id }}">
             <input type="hidden" name="action" value="adjust_balance">
             <input class="input-sm" type="number" step="0.01" name="amount" placeholder="+/- USD" required>
@@ -63,6 +65,7 @@
         <td>
           <div class="table-actions">
             <form class="inline-form" method="post" action="{{ url_for('users.index', page=page) }}">
+              <input type="hidden" name="{{ csrf_field_name }}" value="{{ csrf_token() }}">
               <input type="hidden" name="user_id" value="{{ u.id }}">
               <input type="hidden" name="action" value="{% if u.is_banned %}unban{% else %}ban{% endif %}">
               {% if u.is_banned %}

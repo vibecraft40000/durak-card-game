@@ -2,45 +2,59 @@ package middleware
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 
-	"durakonline/backend/internal/auth"
 	"durakonline/backend/internal/users"
+	"durakonline/backend/pkg/httpapi"
+	"durakonline/backend/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 type contextKey string
 
 const UserContextKey contextKey = "user"
 
-func AuthJWT(authService *auth.Service, userRepo *users.Repository) func(http.Handler) http.Handler {
+type jwtParser interface {
+	ParseJWT(token string) (string, error)
+}
+
+type userGetter interface {
+	GetByID(ctx context.Context, userID string) (users.User, bool)
+}
+
+func AuthJWT(authService jwtParser, userRepo userGetter, log *zap.Logger) func(http.Handler) http.Handler {
+	if log == nil {
+		log = zap.NewNop()
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestLog := logger.WithRequest(log, r)
 			authHeader := r.Header.Get("Authorization")
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			if token == "" || token == authHeader {
-				log.Printf("[auth] 401 path=%s reason=missing_token", r.URL.Path)
-				http.Error(w, "missing bearer token", http.StatusUnauthorized)
+				requestLog.Warn("auth middleware: missing bearer token")
+				httpapi.WriteError(w, r, http.StatusUnauthorized, "missing_bearer_token", "missing bearer token", nil)
 				return
 			}
 
 			userID, err := authService.ParseJWT(token)
 			if err != nil {
-				log.Printf("[auth] 401 path=%s reason=invalid_token err=%v", r.URL.Path, err)
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				requestLog.Warn("auth middleware: invalid token", zap.Error(err))
+				httpapi.WriteError(w, r, http.StatusUnauthorized, "invalid_token", "invalid token", nil)
 				return
 			}
 
 			user, ok := userRepo.GetByID(r.Context(), userID)
 			if !ok {
-				log.Printf("[auth] 401 path=%s reason=user_not_found user_id=%s", r.URL.Path, userID)
-				http.Error(w, "user not found", http.StatusUnauthorized)
+				requestLog.Warn("auth middleware: user not found", zap.String("user_id", userID))
+				httpapi.WriteError(w, r, http.StatusUnauthorized, "user_not_found", "user not found", nil)
 				return
 			}
 			if user.IsBanned {
-				log.Printf("[auth] 403 path=%s reason=user_banned user_id=%s", r.URL.Path, userID)
-				http.Error(w, "user is banned", http.StatusForbidden)
+				requestLog.Warn("auth middleware: user is banned", zap.String("user_id", userID))
+				httpapi.WriteError(w, r, http.StatusForbidden, "user_banned", "user is banned", nil)
 				return
 			}
 

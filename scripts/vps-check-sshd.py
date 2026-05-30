@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Check sshd_config and enable TCP forwarding on VPS."""
+import os
 import paramiko
+import sys
 
-VPS, USER, PASS = "72.56.74.7", "root", "azfzD1V+*gkevz"
+VPS = os.environ.get("VPS_HOST", "YOUR_SERVER_IP")
+USER = os.environ.get("VPS_USER", "root")
+PASS = os.environ.get("VPS_PASSWORD", "").strip()
+
+if not PASS:
+    print("VPS_PASSWORD is required. The previously hardcoded VPS credential was removed from the repo and must be rotated out of band before reuse.")
+    sys.exit(1)
 
 def main():
     client = paramiko.SSHClient()

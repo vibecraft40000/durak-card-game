@@ -5,8 +5,8 @@ const RAW_API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 // Prefer same-origin calls on production domain to avoid CORS issues.
 const API_BASE_URL =
   typeof window !== "undefined" &&
-  (window.location.origin === "https://durakonline.duckdns.org" ||
-    window.location.origin === "https://www.durakonline.duckdns.org")
+  (window.location.origin === "https://your-domain.example" ||
+    window.location.origin === "https://www.your-domain.example")
     ? ""
     : RAW_API_BASE_URL;
 const ACCESS_TOKEN_KEY = "durak_access_token";
@@ -23,15 +23,38 @@ type RequestOptions = {
   retryAuth?: boolean;
 };
 
+type ApiErrorEnvelope = {
+  code?: string;
+  message?: string;
+  details?: unknown;
+  request_id?: string;
+};
+
 export class HttpError extends Error {
   readonly status: number;
   readonly responseBody: unknown;
+  readonly payload: unknown;
+  readonly code?: string;
+  readonly details?: unknown;
+  readonly requestId?: string;
 
-  constructor(message: string, status: number, responseBody: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    responseBody: unknown,
+    payload: unknown = responseBody,
+    code?: string,
+    details?: unknown,
+    requestId?: string,
+  ) {
     super(message);
     this.name = "HttpError";
     this.status = status;
     this.responseBody = responseBody;
+    this.payload = payload;
+    this.code = code;
+    this.details = details;
+    this.requestId = requestId;
   }
 }
 
@@ -77,7 +100,18 @@ export async function httpRequest<T>(path: string, options: RequestOptions = {})
         return httpRequest<T>(path, { ...options, retryAuth: false });
       }
     }
-    throw new HttpError(`Request failed: ${response.status}`, response.status, parsed);
+    const envelope = parseApiErrorEnvelope(parsed);
+    const message = envelope?.message?.trim() ? envelope.message : `Request failed: ${response.status}`;
+    const responseBody = envelope?.message ?? parsed;
+    throw new HttpError(
+      message,
+      response.status,
+      responseBody,
+      parsed,
+      envelope?.code,
+      envelope?.details,
+      envelope?.request_id,
+    );
   }
 
   return parsed as T;
@@ -151,4 +185,22 @@ function tryParseJson(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function parseApiErrorEnvelope(value: unknown): ApiErrorEnvelope | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  const code = typeof candidate.code === "string" ? candidate.code : undefined;
+  const message = typeof candidate.message === "string" ? candidate.message : undefined;
+  if (!code && !message) {
+    return null;
+  }
+  return {
+    code,
+    message,
+    details: candidate.details,
+    request_id: typeof candidate.request_id === "string" ? candidate.request_id : undefined,
+  };
 }

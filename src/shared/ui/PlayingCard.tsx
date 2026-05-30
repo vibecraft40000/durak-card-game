@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { Suit } from "@/entities/card/types";
+import { FACE_CARD_RANKS, type Suit } from "@/entities/card/types";
 
 const SUIT_SYMBOLS: Record<string, string> = {
   hearts: "♥",
@@ -8,7 +8,7 @@ const SUIT_SYMBOLS: Record<string, string> = {
   spades: "♠",
 };
 
-const FACE_RANKS = new Set(["J", "Q", "K", "A"]);
+const FACE_RANKS = new Set<string>(FACE_CARD_RANKS);
 
 function getSuitSymbol(suit: string): string {
   return SUIT_SYMBOLS[suit] ?? "?";
@@ -46,6 +46,7 @@ export const PlayingCard = memo(function PlayingCard({
   const suitClass = suit ? getSuitModifier(suit) : "";
   const selectedClass = selected ? "playing-card--selected" : "";
   const dimmedClass = dimmed ? "playing-card--dimmed" : "";
+  const faceClass = rank && FACE_RANKS.has(rank) ? "playing-card--face" : "playing-card--number";
 
   if (placeholder) {
     return <div className={`${baseClass} playing-card--placeholder ${variantClass}`} aria-hidden />;
@@ -60,15 +61,16 @@ export const PlayingCard = memo(function PlayingCard({
   }
 
   const symbol = suit ? getSuitSymbol(suit) : "";
-  const center = rank && FACE_RANKS.has(rank) ? rank : symbol;
-
   const content = (
     <>
       <span className="playing-card__corner playing-card__corner--top">
         <span>{rank ?? ""}</span>
         <span>{symbol}</span>
       </span>
-      <span className="playing-card__center">{center}</span>
+      <span className="playing-card__center">
+        <span className="playing-card__center-rank">{rank ?? ""}</span>
+        <span className="playing-card__center-suit">{symbol}</span>
+      </span>
       <span className="playing-card__corner playing-card__corner--bottom" aria-hidden>
         <span>{rank ?? ""}</span>
         <span>{symbol}</span>
@@ -76,11 +78,16 @@ export const PlayingCard = memo(function PlayingCard({
     </>
   );
 
-  const className = [baseClass, variantClass, suitClass, selectedClass, dimmedClass].filter(Boolean).join(" ");
+  const className = [baseClass, variantClass, suitClass, selectedClass, dimmedClass, faceClass].filter(Boolean).join(" ");
 
   if (interactive && onClick) {
     return (
-      <button type="button" className={className} onClick={onClick} aria-label={`card ${rank ?? ""} ${symbol}`}>
+      <button
+        type="button"
+        className={className}
+        onClick={onClick}
+        aria-label={`card ${rank ?? ""} ${suit ?? ""}`}
+      >
         {content}
       </button>
     );

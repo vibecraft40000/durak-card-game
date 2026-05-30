@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,25 +21,45 @@ import (
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 type Handler struct {
-	authService   *auth.Service
-	rooms         *rooms.Service
-	games         *games.Service
-	wallet        *wallet.Service
-	users         *users.Repository
-	commissionBps int
-	disableMoney  bool
-	hub           *Hub
-	bus           *Bus
-	limiter       *ratelimit.Service
-	upgrader      websocket.Upgrader
+	authService            *auth.Service
+	rooms                  *rooms.Service
+	games                  *games.Service
+	wallet                 *wallet.Service
+	users                  *users.Repository
+	commissionBps          int
+	disableMoney           bool
+	syncDiffSkipFinalState bool
+	hub                    *Hub
+	bus                    *Bus
+	limiter                *ratelimit.Service
+	upgrader               websocket.Upgrader
+	replayMu               sync.RWMutex
+	replayMoves            map[string][]replayMoveEvent
+	redis                  *redis.Client
 }
 
-func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, usersRepo *users.Repository, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service, allowedOrigin string) *Handler {
+type replayMoveEvent struct {
+	Version int64
+	Event   ServerEvent
+}
+
+type replayRedisEntry struct {
+	Version int64       `json:"version"`
+	Event   ServerEvent `json:"event"`
+}
+
+const (
+	replayBufferPerMatch = 64
+	replayRedisTTL       = 6 * time.Hour
+	replaySyncTailMax    = 8
+)
+
+func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesService *games.Service, walletService *wallet.Service, usersRepo *users.Repository, commissionBps int, disableMoney bool, hub *Hub, bus *Bus, limiter *ratelimit.Service, redisClient *redis.Client, allowedOrigin string, syncDiffSkipFinalState bool) *Handler {
 	allowed := make(map[string]bool)
 	for _, o := range strings.Split(allowedOrigin, ",") {
 		o = strings.TrimSpace(strings.TrimRight(o, "/"))
@@ -55,350 +76,411 @@ func NewHandler(authService *auth.Service, roomsService *rooms.Service, gamesSer
 	}
 
 	return &Handler{
-		authService:   authService,
-		rooms:         roomsService,
-		games:         gamesService,
-		wallet:        walletService,
-		users:         usersRepo,
-		commissionBps: commissionBps,
-		disableMoney:  disableMoney,
-		hub:           hub,
-		bus:           bus,
-		limiter:       limiter,
+		authService:            authService,
+		rooms:                  roomsService,
+		games:                  gamesService,
+		wallet:                 walletService,
+		users:                  usersRepo,
+		commissionBps:          commissionBps,
+		disableMoney:           disableMoney,
+		syncDiffSkipFinalState: syncDiffSkipFinalState,
+		hub:                    hub,
+		bus:                    bus,
+		limiter:                limiter,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: checkOrigin,
 		},
+		replayMoves: make(map[string][]replayMoveEvent),
+		redis:       redisClient,
 	}
 }
 
-func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	userID, err := h.authService.ParseJWT(token)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	roomID := r.URL.Query().Get("roomId")
-	if roomID == "" {
-		roomID = chi.URLParam(r, "id")
-	}
-	if roomID == "" {
-		http.Error(w, "room id required", http.StatusBadRequest)
-		return
+func (h *Handler) syncStateToClient(ctx context.Context, client *Client, room rooms.Room, state engine.GameState, options syncRequestOptions) {
+	fromVersion := int64(0)
+	if options.lastKnownVersion != nil && *options.lastKnownVersion > 0 {
+		fromVersion = *options.lastKnownVersion
 	}
 
-	conn, err := h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	const maxMessageSize = 32 << 10
-	conn.SetReadLimit(maxMessageSize)
-
-	room, roomErr := h.rooms.Get(r.Context(), roomID)
-	if roomErr != nil || !slices.Contains(room.Players, userID) {
-		conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "forbidden_room"), time.Now().Add(5*time.Second))
-		conn.Close()
-		return
-	}
-
-	client := NewClient(userID, roomID, conn, 512)
-	if !h.hub.Register(client) {
-		conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "too_many_connections"), time.Now().Add(5*time.Second))
-		conn.Close()
-		return
-	}
-	var cleanupOnce sync.Once
-	cleanup := func() {
-		cleanupOnce.Do(func() {
-			h.hub.Unregister(client)
-			client.Close()
-			ctx := context.Background()
-			room, roomErr := h.rooms.Get(ctx, client.RoomID)
-			if roomErr == nil && room.Status == rooms.StatusInGame && room.MatchID != "" {
-				_ = h.games.MarkDisconnected(ctx, room.MatchID, client.UserID)
-				metrics.IncWSDisconnect("in_game_grace")
-				h.broadcast(ctx, client.RoomID, ServerEvent{
-					Type: "player_disconnected",
-					Payload: map[string]any{
-						"roomId":   client.RoomID,
-						"playerId": client.UserID,
-					},
-				})
+	mode := "noop"
+	replayCount := 0
+	replayFromVersion := int64(0)
+	var replayEvents []ServerEvent
+	if state.Version > fromVersion {
+		mode = "snapshot"
+		replayFrom := fromVersion
+		// Version 1 is match bootstrap and has no move_applied event.
+		if replayFrom < 1 {
+			replayFrom = 1
+		}
+		if replayFrom < state.Version {
+			fullReplay, ok := h.replayForVersionRange(room.MatchID, replayFrom, state.Version)
+			if ok && len(fullReplay) > 0 {
+				mode = "replay"
+				replayEvents = fullReplay
+				replayCount = len(fullReplay)
+				replayFromVersion = replayFrom + 1
 			} else {
-				metrics.IncWSDisconnect("leave")
-				if room, err := h.rooms.LeaveOnDisconnect(ctx, client.RoomID, client.UserID); err == nil {
-					h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
+				tailReplay, tailFromVersion, tailOK := h.replayTailForVersionRange(room.MatchID, replayFrom, state.Version, replaySyncTailMax)
+				if tailOK && len(tailReplay) > 0 {
+					replayEvents = tailReplay
+					replayCount = len(tailReplay)
+					replayFromVersion = tailFromVersion
 				}
 			}
-		})
-	}
-	defer cleanup()
-	go client.writePump(5*time.Second, cleanup)
-
-	h.broadcast(r.Context(), roomID, ServerEvent{
-		Type: "room_update",
-		Payload: func() any {
-			room, err := h.rooms.Get(r.Context(), roomID)
-			if err != nil {
-				return map[string]string{"roomId": roomID, "connectedUserId": userID}
-			}
-			return room
-		}(),
-	})
-
-	for {
-		_, msg, err := conn.ReadMessage()
-		if err != nil {
-			return
 		}
+	}
 
-		var event ClientEvent
-		if err := json.Unmarshal(msg, &event); err != nil {
-			h.sendRoomError(client, "invalid event payload")
+	syncPayload := map[string]any{
+		"roomId":      room.ID,
+		"matchId":     room.MatchID,
+		"fromVersion": fromVersion,
+		"toVersion":   state.Version,
+		"mode":        mode,
+		"replayCount": replayCount,
+	}
+	if replayFromVersion > 0 {
+		syncPayload["replayFromVersion"] = replayFromVersion
+	}
+
+	_ = h.send(client, ServerEvent{
+		Type:    "state_sync",
+		Payload: syncPayload,
+	})
+	metrics.ObserveWSSyncPayloadBytes("state_sync", payloadSizeBytes(syncPayload))
+	metrics.IncWSStateSync(mode)
+	metrics.AddWSReplayMovesSent(replayCount)
+	for _, replayEvent := range replayEvents {
+		_ = h.send(client, replayEvent)
+		metrics.ObserveWSSyncPayloadBytes("move_applied", payloadSizeBytes(replayEvent.Payload))
+	}
+	sentStateDiff := false
+	if mode == "snapshot" && fromVersion > 0 {
+		stateDiffPayload := h.toStateDiffPayload(ctx, room.ID, state, client.UserID, fromVersion)
+		_ = h.send(client, ServerEvent{
+			Type:    "state_diff",
+			Payload: stateDiffPayload,
+		})
+		metrics.IncWSStateDiff()
+		metrics.ObserveWSSyncPayloadBytes("state_diff", payloadSizeBytes(stateDiffPayload))
+		sentStateDiff = true
+	}
+	if h.shouldSkipFinalGameState(state, options, sentStateDiff) {
+		metrics.IncWSSyncFinalStateSkipped()
+		return
+	}
+
+	gameStatePayload := h.toGameStateDTO(ctx, room.ID, state, client.UserID)
+	_ = h.send(client, ServerEvent{
+		Type:    "game_state",
+		Payload: gameStatePayload,
+	})
+	metrics.ObserveWSSyncPayloadBytes("game_state", payloadSizeBytes(gameStatePayload))
+}
+
+func (h *Handler) shouldSkipFinalGameState(state engine.GameState, options syncRequestOptions, sentStateDiff bool) bool {
+	if !h.syncDiffSkipFinalState || !sentStateDiff || !options.supportsStateDiff {
+		return false
+	}
+	if options.lastKnownMatchID == "" {
+		return false
+	}
+	return options.lastKnownMatchID == state.MatchID
+}
+
+func payloadSizeBytes(payload any) int {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0
+	}
+	return len(raw)
+}
+
+func (h *Handler) replayForVersionRange(matchID string, fromVersion, toVersion int64) ([]ServerEvent, bool) {
+	if matchID == "" || toVersion <= fromVersion {
+		return nil, true
+	}
+	if replay, ok := h.replayForVersionRangeLocal(matchID, fromVersion, toVersion); ok {
+		return replay, true
+	}
+	return h.replayForVersionRangeRedis(matchID, fromVersion, toVersion)
+}
+
+func (h *Handler) replayTailForVersionRange(matchID string, fromVersion, toVersion int64, maxTail int) ([]ServerEvent, int64, bool) {
+	if matchID == "" || toVersion <= fromVersion || maxTail <= 0 {
+		return nil, 0, false
+	}
+	if replay, replayFromVersion, ok := h.replayTailForVersionRangeLocal(matchID, fromVersion, toVersion, maxTail); ok {
+		return replay, replayFromVersion, true
+	}
+	return h.replayTailForVersionRangeRedis(matchID, fromVersion, toVersion, maxTail)
+}
+
+func (h *Handler) replayForVersionRangeLocal(matchID string, fromVersion, toVersion int64) ([]ServerEvent, bool) {
+	h.replayMu.RLock()
+	buffer := slices.Clone(h.replayMoves[matchID])
+	h.replayMu.RUnlock()
+	if len(buffer) == 0 {
+		return nil, false
+	}
+	return extractReplayFromBuffer(buffer, fromVersion, toVersion)
+}
+
+func (h *Handler) replayTailForVersionRangeLocal(matchID string, fromVersion, toVersion int64, maxTail int) ([]ServerEvent, int64, bool) {
+	h.replayMu.RLock()
+	buffer := slices.Clone(h.replayMoves[matchID])
+	h.replayMu.RUnlock()
+	if len(buffer) == 0 {
+		return nil, 0, false
+	}
+	return extractReplayTailFromBuffer(buffer, fromVersion, toVersion, maxTail)
+}
+
+func (h *Handler) replayForVersionRangeRedis(matchID string, fromVersion, toVersion int64) ([]ServerEvent, bool) {
+	if h.redis == nil {
+		return nil, false
+	}
+	rawEntries, err := h.redis.LRange(context.Background(), replayRedisKey(matchID), 0, -1).Result()
+	if err != nil || len(rawEntries) == 0 {
+		return nil, false
+	}
+	buffer := make([]replayMoveEvent, 0, len(rawEntries))
+	for _, raw := range rawEntries {
+		var entry replayRedisEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
 			continue
 		}
-		h.handleClientEvent(r.Context(), client, event)
+		if entry.Version <= 1 || entry.Event.Type != "move_applied" {
+			continue
+		}
+		buffer = append(buffer, replayMoveEvent{
+			Version: entry.Version,
+			Event:   entry.Event,
+		})
+	}
+	if len(buffer) == 0 {
+		return nil, false
+	}
+	replay, ok := extractReplayFromBuffer(buffer, fromVersion, toVersion)
+	if !ok {
+		return nil, false
+	}
+	h.replayMu.Lock()
+	h.replayMoves[matchID] = append([]replayMoveEvent(nil), buffer...)
+	h.replayMu.Unlock()
+	return replay, true
+}
+
+func (h *Handler) replayTailForVersionRangeRedis(matchID string, fromVersion, toVersion int64, maxTail int) ([]ServerEvent, int64, bool) {
+	if h.redis == nil {
+		return nil, 0, false
+	}
+	rawEntries, err := h.redis.LRange(context.Background(), replayRedisKey(matchID), 0, -1).Result()
+	if err != nil || len(rawEntries) == 0 {
+		return nil, 0, false
+	}
+	buffer := make([]replayMoveEvent, 0, len(rawEntries))
+	for _, raw := range rawEntries {
+		var entry replayRedisEntry
+		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
+			continue
+		}
+		if entry.Version <= 1 || entry.Event.Type != "move_applied" {
+			continue
+		}
+		buffer = append(buffer, replayMoveEvent{
+			Version: entry.Version,
+			Event:   entry.Event,
+		})
+	}
+	if len(buffer) == 0 {
+		return nil, 0, false
+	}
+	replay, replayFromVersion, ok := extractReplayTailFromBuffer(buffer, fromVersion, toVersion, maxTail)
+	if !ok {
+		return nil, 0, false
+	}
+	h.replayMu.Lock()
+	h.replayMoves[matchID] = append([]replayMoveEvent(nil), buffer...)
+	h.replayMu.Unlock()
+	return replay, replayFromVersion, true
+}
+
+func extractReplayFromBuffer(buffer []replayMoveEvent, fromVersion, toVersion int64) ([]ServerEvent, bool) {
+	expected := fromVersion + 1
+	out := make([]ServerEvent, 0, toVersion-fromVersion)
+	for _, item := range buffer {
+		if item.Version < expected {
+			continue
+		}
+		if item.Version > toVersion {
+			break
+		}
+		if item.Version != expected {
+			return nil, false
+		}
+		out = append(out, item.Event)
+		expected++
+	}
+	if expected-1 != toVersion {
+		return nil, false
+	}
+	return out, true
+}
+
+func extractReplayTailFromBuffer(buffer []replayMoveEvent, fromVersion, toVersion int64, maxTail int) ([]ServerEvent, int64, bool) {
+	if len(buffer) == 0 || toVersion <= fromVersion || maxTail <= 0 {
+		return nil, 0, false
+	}
+
+	expected := toVersion
+	reversed := make([]ServerEvent, 0, maxTail)
+	replayFromVersion := int64(0)
+
+	for i := len(buffer) - 1; i >= 0 && len(reversed) < maxTail; i-- {
+		item := buffer[i]
+		if item.Version > expected {
+			continue
+		}
+		if item.Version <= fromVersion {
+			break
+		}
+		if item.Version != expected {
+			break
+		}
+		reversed = append(reversed, item.Event)
+		replayFromVersion = item.Version
+		expected--
+	}
+	if len(reversed) == 0 {
+		return nil, 0, false
+	}
+
+	out := make([]ServerEvent, len(reversed))
+	for i := 0; i < len(reversed); i++ {
+		out[i] = reversed[len(reversed)-1-i]
+	}
+	return out, replayFromVersion, true
+}
+
+func (h *Handler) recordReplayMove(matchID string, version int64, event ServerEvent, persistToRedis bool) {
+	if matchID == "" || version <= 1 || event.Type != "move_applied" {
+		return
+	}
+	h.recordReplayMoveLocal(matchID, version, event)
+	if persistToRedis {
+		h.persistReplayMoveRedis(matchID, version, event)
 	}
 }
 
-func (h *Handler) handleClientEvent(ctx context.Context, client *Client, event ClientEvent) {
-	switch event.Type {
-	case "join_room", "reconnect":
-		if !h.allowWSRateLimit(ctx, client, event.Type) {
-			return
-		}
-		room, err := h.rooms.Get(ctx, client.RoomID)
-		if err != nil {
-			h.sendRoomError(client, err.Error())
-			return
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{
-			Type:    "room_update",
-			Payload: room,
-		})
-		if room.MatchID != "" {
-			if room.Status == rooms.StatusInGame {
-				_ = h.games.ClearDisconnected(ctx, room.MatchID, client.UserID)
-				metrics.IncGameReconnect()
-				h.broadcast(ctx, client.RoomID, ServerEvent{
-					Type: "player_reconnected",
-					Payload: map[string]any{
-						"roomId":   client.RoomID,
-						"playerId": client.UserID,
-					},
-				})
-			}
-			state, err := h.games.GetState(ctx, room.MatchID)
-			if err == nil {
-				h.broadcastGameState(ctx, client.RoomID, state)
-				h.handleBotTurns(ctx, client.RoomID, room, state)
-			}
-		}
-	case "ready", "confirm_join":
-		room, err := h.rooms.Ready(ctx, client.RoomID, client.UserID)
-		if err != nil {
-			h.sendRoomError(client, err.Error())
-			return
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
-		if room.MatchID != "" {
-			state, err := h.games.GetState(ctx, room.MatchID)
-			if err == nil {
-				h.broadcastGameState(ctx, client.RoomID, state)
-				h.handleBotTurns(ctx, client.RoomID, room, state)
-			}
-		}
-	case "start_game":
-		room, err := h.rooms.StartGame(ctx, client.RoomID, client.UserID)
-		if err != nil {
-			h.sendRoomError(client, err.Error())
-			return
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
-		if room.MatchID != "" {
-			state, err := h.games.GetState(ctx, room.MatchID)
-			if err == nil {
-				h.broadcastGameState(ctx, client.RoomID, state)
-				h.handleBotTurns(ctx, client.RoomID, room, state)
-			}
-		}
-	case "confirm_stake":
-		room, err := h.rooms.ConfirmStake(ctx, client.RoomID, client.UserID)
-		if err != nil {
-			h.sendRoomError(client, err.Error())
-			return
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: room})
-		if room.MatchID != "" {
-			state, err := h.games.GetState(ctx, room.MatchID)
-			if err == nil {
-				h.broadcastGameState(ctx, client.RoomID, state)
-				h.handleBotTurns(ctx, client.RoomID, room, state)
-			}
-		}
-	case "make_move":
-		allowed, rlErr := h.limiter.Allow(ctx, "make_move:"+client.UserID, 30, 10*time.Second)
-		if rlErr != nil {
-			h.sendRoomError(client, "rate limiter unavailable")
-			return
-		}
-		if !allowed {
-			h.sendRoomErrorWithCode(client, "rate limit exceeded", "RATE_LIMIT")
-			return
-		}
-		moveStart := time.Now()
-		defer metrics.ObserveMatchMoveDuration(moveStart)
-		actionRaw, _ := event.Payload["action"].(string)
-		action := normalizeAction(actionRaw)
-		cardID, _ := event.Payload["cardId"].(string)
-		var expectedVersion *int64
-		if v, ok := event.Payload["expectedVersion"].(float64); ok {
-			iv := int64(v)
-			expectedVersion = &iv
-		}
-		actionID, _ := event.Payload["actionId"].(string)
-		room, err := h.rooms.Get(ctx, client.RoomID)
-		if err != nil || room.MatchID == "" {
-			h.sendRoomError(client, "match is not active")
-			return
-		}
-		state, applied, err := h.games.Apply(ctx, room.MatchID, client.UserID, action, cardID, expectedVersion, actionID)
-		if err != nil {
-			if errors.Is(err, games.ErrVersionMismatch) {
-				metrics.IncVersionMismatch()
-				// Handled separately: send game_state + version_mismatch, no error
-				currentState, getErr := h.games.GetState(ctx, room.MatchID)
-				if getErr == nil {
-					_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, currentState, client.UserID)})
-					_ = h.hub.Send(client, ServerEvent{
-						Type: "version_mismatch",
-						Payload: map[string]any{
-							"roomId":   client.RoomID,
-							"action":   actionRaw,
-							"cardId":   cardID,
-							"actionId": actionID,
-						},
-					})
-				}
-				return
-			}
-			code := errorCodeFromEngine(err)
-			h.sendRoomErrorWithCode(client, err.Error(), code)
-			return
-		}
-		if !applied {
-			return
-		}
-		eventID := ""
-		if state.Version > 0 {
-			eventID = fmt.Sprintf("%s:v%d", room.MatchID, state.Version)
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{
-			Type: "move_applied",
-			Payload: map[string]any{
-				"roomId":   client.RoomID,
-				"matchId":  room.MatchID,
-				"eventId":  eventID,
-				"playerId": client.UserID,
-				"action":   action,
-				"cardId":   cardID,
-			},
-		})
-		h.broadcastGameState(ctx, client.RoomID, state)
-		h.broadcast(ctx, client.RoomID, ServerEvent{
-			Type: "timer_update",
-			Payload: map[string]any{
-				"roomId":       client.RoomID,
-				"turnPlayerId": state.TurnPlayerID,
-				"turnEndsAt":   state.TurnEndsAt.UnixMilli(),
-			},
-		})
-		if state.Status == engine.StatusFinished {
-			var payoutInfo *games.PayoutInfo
-			if !h.disableMoney && !containsBotPlayer(state.PlayerOrder) {
-				payoutInfo, _ = h.games.SettleMatchIfFinished(ctx, h.wallet, state, room.Stake, h.commissionBps)
-			}
-			if _, err := h.rooms.MarkRoomFinished(ctx, client.RoomID); err == nil {
-				h.broadcast(ctx, client.RoomID, ServerEvent{Type: "room_update", Payload: func() any {
-					r, _ := h.rooms.Get(ctx, client.RoomID)
-					return r
-				}()})
-			}
-			payload := map[string]any{
-				"roomId":          client.RoomID,
-				"winnerPlayerId":  state.WinnerPlayer,
-				"winnerPlayerIds": state.WinnerPlayers,
-				"isDraw":          state.IsDraw,
-				"finishGroups":    state.FinishGroups,
-			}
-			if payoutInfo != nil {
-				payload["settlementId"] = payoutInfo.SettlementID
-				payload["payouts"] = payoutInfo.Payouts
-				payload["commission"] = payoutInfo.Commission
-				payload["pot"] = payoutInfo.Pot
-				if len(payoutInfo.NewBalances) > 0 {
-					payload["newBalances"] = payoutInfo.NewBalances
-				}
-			}
-			h.broadcast(ctx, client.RoomID, ServerEvent{Type: "match_finished", Payload: payload})
-			return
-		}
-		h.handleBotTurns(ctx, client.RoomID, room, state)
-	case "send_message":
-		if !h.allowWSRateLimit(ctx, client, "send_message") {
-			return
-		}
-		raw, _ := event.Payload["message"].(string)
-		msg := strings.TrimSpace(raw)
-		if msg == "" {
-			return
-		}
-		const maxChatLen = 512
-		runes := []rune(msg)
-		if len(runes) > maxChatLen {
-			msg = string(runes[:maxChatLen])
-		}
-		h.broadcast(ctx, client.RoomID, ServerEvent{
-			Type: "chat_message",
-			Payload: map[string]string{
-				"userId":  client.UserID,
-				"message": msg,
-			},
-		})
-	case "sync_request":
-		if !h.allowWSRateLimit(ctx, client, "sync_request") {
-			return
-		}
-		room, err := h.rooms.Get(ctx, client.RoomID)
-		if err != nil || room.MatchID == "" {
-			return
-		}
-		state, err := h.games.GetState(ctx, room.MatchID)
-		if err == nil {
-			_ = h.hub.Send(client, ServerEvent{Type: "game_state", Payload: h.toGameStateDTO(ctx, client.RoomID, state, client.UserID)})
-		}
-	default:
-		h.sendRoomError(client, "unsupported event type")
+func (h *Handler) recordReplayMoveLocal(matchID string, version int64, event ServerEvent) {
+	h.replayMu.Lock()
+	defer h.replayMu.Unlock()
+
+	buffer := append(h.replayMoves[matchID], replayMoveEvent{
+		Version: version,
+		Event:   event,
+	})
+	if len(buffer) > replayBufferPerMatch {
+		buffer = buffer[len(buffer)-replayBufferPerMatch:]
+	}
+	h.replayMoves[matchID] = buffer
+}
+
+func (h *Handler) persistReplayMoveRedis(matchID string, version int64, event ServerEvent) {
+	if h.redis == nil {
+		return
+	}
+	entry := replayRedisEntry{
+		Version: version,
+		Event:   event,
+	}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	key := replayRedisKey(matchID)
+	pipe := h.redis.TxPipeline()
+	pipe.RPush(context.Background(), key, raw)
+	pipe.LTrim(context.Background(), key, -replayBufferPerMatch, -1)
+	pipe.Expire(context.Background(), key, replayRedisTTL)
+	_, _ = pipe.Exec(context.Background())
+}
+
+func (h *Handler) clearReplayMoves(matchID string) {
+	if matchID == "" {
+		return
+	}
+	h.replayMu.Lock()
+	delete(h.replayMoves, matchID)
+	h.replayMu.Unlock()
+	if h.redis != nil {
+		_ = h.redis.Del(context.Background(), replayRedisKey(matchID)).Err()
 	}
 }
 
-func normalizeAction(raw string) engine.Action {
-	switch raw {
-	case "attack_card":
-		return engine.ActionAttack
-	case "defend_card":
-		return engine.ActionDefend
-	case "translate":
-		return engine.ActionTranslate
-	case "take_cards":
-		return engine.ActionTake
-	case "shuler_report":
-		return engine.ActionShulerReport
-	case "pass_turn", "end_round":
-		return engine.ActionPass
-	default:
-		return engine.Action(raw)
+func (h *Handler) recordReplayFromEvent(event ServerEvent) {
+	matchID, version, ok := extractReplayMeta(event)
+	if !ok {
+		return
 	}
+	h.recordReplayMove(matchID, version, event, false)
+}
+
+func extractReplayMeta(event ServerEvent) (string, int64, bool) {
+	if event.Type != "move_applied" {
+		return "", 0, false
+	}
+	raw, err := json.Marshal(event.Payload)
+	if err != nil {
+		return "", 0, false
+	}
+	var payload struct {
+		MatchID string `json:"matchId"`
+		EventID string `json:"eventId"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", 0, false
+	}
+	version := parseVersionFromEventID(payload.EventID)
+	if payload.MatchID == "" || version <= 1 {
+		return "", 0, false
+	}
+	return payload.MatchID, version, true
+}
+
+func parseVersionFromEventID(eventID string) int64 {
+	if eventID == "" {
+		return 0
+	}
+	index := strings.LastIndex(eventID, ":v")
+	if index < 0 || index+2 >= len(eventID) {
+		return 0
+	}
+	version, err := strconv.ParseInt(eventID[index+2:], 10, 64)
+	if err != nil || version < 0 {
+		return 0
+	}
+	return version
+}
+
+func replayRedisKey(matchID string) string {
+	return "ws:replay:" + matchID
+}
+
+func (h *Handler) broadcastMoveApplied(ctx context.Context, roomID, matchID string, version int64, playerID, action, cardID, eventID string) {
+	event := ServerEvent{
+		Type: "move_applied",
+		Payload: map[string]any{
+			"roomId":   roomID,
+			"matchId":  matchID,
+			"eventId":  eventID,
+			"playerId": playerID,
+			"action":   action,
+			"cardId":   cardID,
+		},
+	}
+	h.recordReplayMove(matchID, version, event, true)
+	h.broadcast(ctx, roomID, event)
 }
 
 func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.Room, state engine.GameState) {
@@ -426,17 +508,7 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 		if nextState.Version > 0 {
 			eventID = fmt.Sprintf("%s:v%d", room.MatchID, nextState.Version)
 		}
-		h.broadcast(ctx, roomID, ServerEvent{
-			Type: "move_applied",
-			Payload: map[string]any{
-				"roomId":   roomID,
-				"matchId":  room.MatchID,
-				"eventId":  eventID,
-				"playerId": current.TurnPlayerID,
-				"action":   string(action),
-				"cardId":   cardID,
-			},
-		})
+		h.broadcastMoveApplied(ctx, roomID, room.MatchID, nextState.Version, current.TurnPlayerID, string(action), cardID, eventID)
 		h.broadcastGameState(ctx, roomID, nextState)
 		h.broadcast(ctx, roomID, ServerEvent{
 			Type: "timer_update",
@@ -469,6 +541,7 @@ func (h *Handler) handleBotTurns(ctx context.Context, roomID string, room rooms.
 				}
 			}
 			h.broadcast(ctx, roomID, ServerEvent{Type: "match_finished", Payload: payload})
+			h.clearReplayMoves(room.MatchID)
 			return
 		}
 		current = nextState
@@ -502,17 +575,7 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 	if result.State.Version > 0 {
 		eventID = fmt.Sprintf("%s:v%d", result.MatchID, result.State.Version)
 	}
-	h.broadcast(ctx, roomID, ServerEvent{
-		Type: "move_applied",
-		Payload: map[string]any{
-			"roomId":   roomID,
-			"matchId":  result.MatchID,
-			"eventId":  eventID,
-			"playerId": result.PlayerID,
-			"action":   string(result.Action),
-			"cardId":   result.CardID,
-		},
-	})
+	h.broadcastMoveApplied(ctx, roomID, result.MatchID, result.State.Version, result.PlayerID, string(result.Action), result.CardID, eventID)
 	h.broadcastGameState(ctx, roomID, result.State)
 	h.broadcast(ctx, roomID, ServerEvent{
 		Type: "timer_update",
@@ -550,6 +613,7 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 			}
 		}
 		h.broadcast(ctx, roomID, ServerEvent{Type: "match_finished", Payload: payload})
+		h.clearReplayMoves(result.MatchID)
 		return
 	}
 	h.handleBotTurns(ctx, roomID, room, result.State)
@@ -558,7 +622,7 @@ func (h *Handler) BroadcastTimeoutApplied(ctx context.Context, roomID string, re
 func (h *Handler) broadcastGameStateLocal(ctx context.Context, roomID string, state engine.GameState) {
 	clients := h.hub.SnapshotRoomClients(roomID)
 	for _, client := range clients {
-		_ = h.hub.Send(client, ServerEvent{
+		_ = h.send(client, ServerEvent{
 			Type:    "game_state",
 			Payload: h.toGameStateDTO(ctx, roomID, state, client.UserID),
 		})
@@ -585,14 +649,22 @@ func (h *Handler) HandleBusEvent(ctx context.Context, roomID string, event Serve
 		h.broadcastGameStateLocal(ctx, roomID, state)
 		return
 	}
-	h.hub.Broadcast(roomID, event)
+	if event.Type == "move_applied" {
+		h.recordReplayFromEvent(event)
+	}
+	h.hub.Broadcast(roomID, withServerEventMeta(event, ""))
 }
 
 func (h *Handler) broadcast(ctx context.Context, roomID string, event ServerEvent) {
+	event = withServerEventMeta(event, "")
 	h.hub.Broadcast(roomID, event)
 	if h.bus != nil {
 		_ = h.bus.Publish(ctx, roomID, event)
 	}
+}
+
+func (h *Handler) send(client *Client, event ServerEvent) bool {
+	return h.hub.Send(client, withServerEventMeta(event, client.Locale))
 }
 
 func (h *Handler) Drain(timeout time.Duration) {
@@ -648,9 +720,9 @@ func errorCodeFromEngine(err error) string {
 		return "INVALID_TURN"
 	case errors.Is(err, engine.ErrCardMissing), errors.Is(err, engine.ErrInvalidMove),
 		errors.Is(err, engine.ErrCardDoesNotBeat), errors.Is(err, engine.ErrAttackCardDenied),
-		errors.Is(err, engine.ErrTranslateDenied):
+		errors.Is(err, engine.ErrTranslateDenied), errors.Is(err, engine.ErrThrowDenied):
 		return "INVALID_CARD"
-	case errors.Is(err, engine.ErrCannotReportShuler):
+	case errors.Is(err, engine.ErrCannotReportShuler), errors.Is(err, engine.ErrShulerPlayDenied):
 		return "INVALID_ACTION"
 	default:
 		return ""
@@ -666,78 +738,5 @@ func (h *Handler) sendRoomErrorWithCode(client *Client, message string, errorCod
 	if errorCode != "" {
 		payload["errorCode"] = errorCode
 	}
-	_ = h.hub.Send(client, ServerEvent{Type: "error", Payload: payload})
-}
-
-func (h *Handler) toGameStateDTO(ctx context.Context, roomID string, state engine.GameState, viewerUserID string) GameStateDTO {
-	players := make([]PlayerDTO, 0, len(state.Hands))
-	for _, playerID := range state.PlayerOrder {
-		hand := state.Hands[playerID]
-		var playerHand []engine.Card
-		if playerID == viewerUserID {
-			playerHand = hand
-		}
-		shortID := playerID
-		if len(shortID) > 4 {
-			shortID = shortID[:4]
-		}
-		displayName := "player-" + shortID
-		photoURL := ""
-		if rooms.IsBotPlayer(playerID) {
-			displayName = "bot"
-		} else if user, ok := h.users.GetByID(ctx, playerID); ok {
-			if user.DisplayName != "" {
-				displayName = user.DisplayName
-			}
-			photoURL = user.PhotoURL
-		}
-		players = append(players, PlayerDTO{
-			ID:            playerID,
-			Username:      displayName,
-			DisplayName:   displayName,
-			PhotoURL:      photoURL,
-			HandCount:     len(hand),
-			Hand:          playerHand,
-			IsCurrentTurn: state.TurnPlayerID == playerID,
-		})
-	}
-	var trumpCard *engine.Card
-	if len(state.Deck) > 0 {
-		c := state.Deck[len(state.Deck)-1]
-		trumpCard = &c
-	}
-	phase := string(state.TurnState)
-	if state.Status == engine.StatusFinished {
-		phase = "result"
-	} else if phase == "" {
-		phase = "attack"
-	}
-	return GameStateDTO{
-		RoomID:          roomID,
-		MatchID:         state.MatchID,
-		Version:         state.Version,
-		Phase:           phase,
-		DeckType:        state.DeckType,
-		Mode:            state.Mode,
-		Players:         players,
-		TableCards:      state.TableCards,
-		TrumpSuit:       string(state.Trump),
-		TrumpCard:       trumpCard,
-		TurnPlayerID:    state.TurnPlayerID,
-		TurnEndsAt:      state.TurnEndsAt.UnixMilli(),
-		Status:          string(state.Status),
-		WinnerPlayerID:  state.WinnerPlayer,
-		WinnerPlayerIDs: state.WinnerPlayers,
-		IsDraw:          state.IsDraw,
-		FinishGroups:    state.FinishGroups,
-		Shuler: map[string]any{
-			"isWindowOpen": state.ShulerEnabled && !state.ShulerDetected,
-			"activePlayers": func() []string {
-				if state.ShulerEnabled && !state.ShulerDetected && state.ShulerPlayerID != "" {
-					return []string{state.ShulerPlayerID}
-				}
-				return []string{}
-			}(),
-		},
-	}
+	_ = h.send(client, ServerEvent{Type: "error", Payload: payload})
 }

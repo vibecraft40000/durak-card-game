@@ -3,10 +3,12 @@ package games
 import (
 	"context"
 	"encoding/json"
+	"math"
+	"sort"
 	"time"
 
-	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/gameresults"
+	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/wallet"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -48,58 +50,157 @@ func normalizedFinishGroups(state engine.GameState) [][]string {
 	return groups
 }
 
-func placePercents(playersCount int, commissionBps int) []float64 {
-	commissionPercent := float64(commissionBps) / 100.0
-	netPercent := 100.0 - commissionPercent
-	if netPercent < 0 {
-		netPercent = 0
-	}
-
+func placeWeights(playersCount int) []int64 {
 	switch playersCount {
 	case 2:
-		return []float64{netPercent}
+		return []int64{1000}
 	case 3:
-		return []float64{netPercent * 0.6, netPercent * 0.4}
+		return []int64{600, 400}
 	case 4:
-		return []float64{netPercent * 0.5, netPercent * 0.3, netPercent * 0.2}
+		return []int64{500, 300, 200}
 	default:
-		return []float64{netPercent}
+		return []int64{1000}
 	}
 }
 
+func cents(amount float64) int64 {
+	return int64(math.Round(amount * 100))
+}
+
+func dollars(amountCents int64) float64 {
+	return float64(amountCents) / 100.0
+}
+
+func roundDiv(numerator, denominator int64) int64 {
+	if denominator == 0 {
+		return 0
+	}
+	quotient := numerator / denominator
+	remainder := numerator % denominator
+	if remainder*2 >= denominator {
+		quotient++
+	}
+	return quotient
+}
+
+func allocateByWeights(total int64, weights []int64) []int64 {
+	if len(weights) == 0 || total <= 0 {
+		return make([]int64, len(weights))
+	}
+	var weightSum int64
+	for _, weight := range weights {
+		weightSum += weight
+	}
+	if weightSum <= 0 {
+		return make([]int64, len(weights))
+	}
+
+	type weightedRemainder struct {
+		index     int
+		remainder int64
+	}
+
+	allocations := make([]int64, len(weights))
+	remainders := make([]weightedRemainder, len(weights))
+	var distributed int64
+	for i, weight := range weights {
+		numerator := total * weight
+		allocations[i] = numerator / weightSum
+		distributed += allocations[i]
+		remainders[i] = weightedRemainder{
+			index:     i,
+			remainder: numerator % weightSum,
+		}
+	}
+
+	sort.SliceStable(remainders, func(i, j int) bool {
+		if remainders[i].remainder == remainders[j].remainder {
+			return remainders[i].index < remainders[j].index
+		}
+		return remainders[i].remainder > remainders[j].remainder
+	})
+
+	for remaining := total - distributed; remaining > 0; remaining-- {
+		allocations[remainders[0].index]++
+		remainders = append(remainders[1:], remainders[0])
+	}
+
+	return allocations
+}
+
+func orderedTieGroup(group []string, playerOrder []string) []string {
+	ordered := make([]string, 0, len(group))
+	groupSet := make(map[string]struct{}, len(group))
+	for _, playerID := range group {
+		groupSet[playerID] = struct{}{}
+	}
+	for _, playerID := range playerOrder {
+		if _, ok := groupSet[playerID]; ok {
+			ordered = append(ordered, playerID)
+			delete(groupSet, playerID)
+		}
+	}
+	for _, playerID := range group {
+		if _, ok := groupSet[playerID]; ok {
+			ordered = append(ordered, playerID)
+			delete(groupSet, playerID)
+		}
+	}
+	return ordered
+}
+
 func computePayouts(state engine.GameState, stake float64, commissionBps int) (pot float64, commission float64, payouts []PayoutEntry, grossByUser map[string]float64) {
-	pot = stake * float64(len(state.PlayerOrder))
-	commission = pot * float64(commissionBps) / 10000
+	stakeCents := cents(stake)
+	potCents := stakeCents * int64(len(state.PlayerOrder))
+	commissionCents := roundDiv(potCents*int64(commissionBps), 10000)
+	distributableCents := potCents - commissionCents
+	if distributableCents < 0 {
+		distributableCents = 0
+	}
+
+	pot = dollars(potCents)
+	commission = dollars(commissionCents)
 
 	groups := normalizedFinishGroups(state)
-	percents := placePercents(len(state.PlayerOrder), commissionBps)
+	placeAllocations := allocateByWeights(distributableCents, placeWeights(len(state.PlayerOrder)))
 	grossByUser = make(map[string]float64, len(state.PlayerOrder))
+	grossByUserCents := make(map[string]int64, len(state.PlayerOrder))
 
 	place := 1
 	for _, group := range groups {
 		if len(group) == 0 {
 			continue
 		}
-		sumPercent := 0.0
+		group = orderedTieGroup(group, state.PlayerOrder)
+		var groupTotal int64
 		for i := 0; i < len(group); i++ {
 			placeIndex := place + i - 1
-			if placeIndex < 0 || placeIndex >= len(percents) {
+			if placeIndex < 0 || placeIndex >= len(placeAllocations) {
 				continue
 			}
-			sumPercent += percents[placeIndex]
+			groupTotal += placeAllocations[placeIndex]
 		}
-		sharePercent := sumPercent / float64(len(group))
-		gross := pot * sharePercent / 100.0
-		for _, playerID := range group {
-			grossByUser[playerID] = gross
+		if groupTotal <= 0 {
+			place += len(group)
+			continue
+		}
+		shareBase := groupTotal / int64(len(group))
+		shareRemainder := groupTotal % int64(len(group))
+		for i, playerID := range group {
+			grossCents := shareBase
+			if int64(i) < shareRemainder {
+				grossCents++
+			}
+			grossByUserCents[playerID] = grossCents
+			grossByUser[playerID] = dollars(grossCents)
 		}
 		place += len(group)
 	}
 
 	payouts = make([]PayoutEntry, 0, len(state.PlayerOrder))
 	for _, playerID := range state.PlayerOrder {
-		gross := grossByUser[playerID]
-		profit := gross - stake
+		grossCents := grossByUserCents[playerID]
+		profit := dollars(grossCents - stakeCents)
 		payouts = append(payouts, PayoutEntry{
 			UserID: playerID,
 			Amount: profit,
@@ -144,6 +245,14 @@ ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`,
 					redisClient.Del(ctx, key)
 					return nil, err
 				}
+			}
+			if _, err := tx.Exec(ctx, `
+INSERT INTO platform_fees (id, match_id, gross_pot, commission_bps, commission_amount, created_at)
+VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW())
+ON CONFLICT (match_id) DO NOTHING`,
+				state.MatchID, pot, commissionBps, commission); err != nil {
+				redisClient.Del(ctx, key)
+				return nil, err
 			}
 
 			if gameResultsRepo != nil {

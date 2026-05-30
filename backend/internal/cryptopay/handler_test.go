@@ -1,71 +1,72 @@
 package cryptopay
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"durakonline/backend/internal/money"
+	"durakonline/backend/internal/users"
+	"durakonline/backend/pkg/middleware"
 )
 
-func TestNormalizeWithdrawMethod(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		want    string
-		wantErr bool
-	}{
-		{name: "default empty", input: "", want: withdrawMethodCrypto},
-		{name: "crypto", input: "crypto", want: withdrawMethodCrypto},
-		{name: "usdt alias", input: "usdt", want: withdrawMethodCrypto},
-		{name: "card", input: "card", want: withdrawMethodCard},
-		{name: "bank card alias", input: "bank-card", want: withdrawMethodCard},
-		{name: "unsupported", input: "cash", wantErr: true},
+func TestCreateWithdrawReturnsForbiddenWhenDisabled(t *testing.T) {
+	handler := NewHandler("", true, nil, nil, "", nil)
+	user := users.User{
+		ID:         "user-1",
+		TelegramID: 12345,
 	}
 
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := normalizeWithdrawMethod(tc.input)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("method mismatch: got %q want %q", got, tc.want)
-			}
-		})
+	req := httptest.NewRequest(http.MethodPost, "/api/withdraw/create", strings.NewReader(`{"amount":10}`))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+
+	handler.CreateWithdraw(nil)(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "withdrawals are disabled during beta until a secure manual review flow is implemented") {
+		t.Fatalf("unexpected response body: %q", rec.Body.String())
 	}
 }
 
-func TestWithdrawFeeBps(t *testing.T) {
-	h := &Handler{withdrawCardFeeBps: 200, withdrawCryptoBps: 0}
-	if got := h.withdrawFeeBps(withdrawMethodCard); got != 200 {
-		t.Fatalf("card fee mismatch: got %d", got)
+func TestCreateWithdrawReturnsForbiddenEvenWhenConfiguredEnabled(t *testing.T) {
+	handler := NewHandler("", true, nil, nil, "", nil).WithWithdrawalsEnabled(true)
+	user := users.User{
+		ID:         "user-1",
+		TelegramID: 12345,
 	}
-	if got := h.withdrawFeeBps(withdrawMethodCrypto); got != 0 {
-		t.Fatalf("crypto fee mismatch: got %d", got)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/withdraw/create", strings.NewReader(`{"amount":10,"currency":"USD","method":"crypto"}`))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+
+	handler.CreateWithdraw(nil)(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "withdrawals are disabled during beta until a secure manual review flow is implemented") {
+		t.Fatalf("unexpected response body: %q", rec.Body.String())
 	}
 }
 
-func TestToUSD(t *testing.T) {
-	converter, err := money.NewConverter("USD:1,UAH:0.025")
-	if err != nil {
-		t.Fatalf("converter init failed: %v", err)
-	}
-	h := &Handler{converter: converter}
+func TestCreateDepositReturnsForbiddenWhenDisabled(t *testing.T) {
+	handler := NewHandler("", true, nil, nil, "", nil).WithDepositsEnabled(false)
+	user := users.User{ID: "user-1"}
 
-	amountUSD, rate, err := h.toUSD(100, "UAH")
-	if err != nil {
-		t.Fatalf("toUSD failed: %v", err)
+	req := httptest.NewRequest(http.MethodPost, "/api/deposit/create", strings.NewReader(`{"amount":10,"currency":"USD"}`))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, user))
+	rec := httptest.NewRecorder()
+
+	handler.CreateDepositInvoice(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected status 403, got %d", rec.Code)
 	}
-	if rate != 0.025 {
-		t.Fatalf("rate mismatch: got %v", rate)
-	}
-	if amountUSD != 2.5 {
-		t.Fatalf("amount mismatch: got %v", amountUSD)
+	if !strings.Contains(rec.Body.String(), "deposits are temporarily unavailable during beta maintenance") {
+		t.Fatalf("unexpected response body: %q", rec.Body.String())
 	}
 }

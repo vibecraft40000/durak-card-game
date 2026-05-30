@@ -1,5 +1,16 @@
 import { getTelegramUser, waitForTelegramInitData } from "@/shared/lib/telegram";
-import { httpRequest } from "@/shared/api/http";
+import { httpRequest, HttpError } from "@/shared/api/http";
+
+/** Thrown when backend returns 403 subscription_required (user must join channel before using the app). */
+export class SubscriptionRequiredError extends Error {
+  readonly channelLink: string;
+
+  constructor(channelLink: string) {
+    super("Subscription to the channel is required to access the app");
+    this.name = "SubscriptionRequiredError";
+    this.channelLink = channelLink;
+  }
+}
 
 type AuthUser = {
   id: string;
@@ -23,10 +34,11 @@ const REFRESH_TOKEN_KEY = "durak_refresh_token";
 const DEV_IDENTITY_KEY = "durak_dev_identity";
 const DEV_AUTH_FLAG_KEY = "durak_dev_auth";
 const FORCE_DEV_AUTH = String(import.meta.env.VITE_FORCE_DEV_AUTH).toLowerCase() === "true";
-const IS_PROD_DOMAIN =
+const IS_LOCAL_DEV_HOST =
   typeof window !== "undefined" &&
-  (window.location.origin === "https://durakonline.duckdns.org" ||
-    window.location.origin === "https://www.durakonline.duckdns.org");
+  (window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "::1");
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -59,6 +71,18 @@ export async function ensureAuthSession(signal?: AbortSignal): Promise<void> {
   await bootstrapTelegramAuth(signal);
 }
 
+function getChannelLinkFromError(err: HttpError): string {
+  if (
+    err.details &&
+    typeof err.details === "object" &&
+    "channelLink" in err.details &&
+    typeof (err.details as { channelLink?: string }).channelLink === "string"
+  ) {
+    return (err.details as { channelLink: string }).channelLink;
+  }
+  return "https://t.me/+P_rbSS0y5N9jM2Qy";
+}
+
 export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void> {
   const opts = { method: "POST" as const, skipAuth: true as const, signal };
   const authorize = async (initData: string, dev: boolean) => {
@@ -74,28 +98,37 @@ export async function bootstrapTelegramAuth(signal?: AbortSignal): Promise<void>
     }
   };
 
+  const authorizeWithSubscriptionCheck = async (initData: string, dev: boolean) => {
+    try {
+      await authorize(initData, dev);
+    } catch (err) {
+      if (
+        err instanceof HttpError &&
+        err.status === 403 &&
+        err.code === "subscription_required"
+      ) {
+        throw new SubscriptionRequiredError(getChannelLinkFromError(err));
+      }
+      throw err;
+    }
+  };
+
   if (FORCE_DEV_AUTH) {
-    await authorize(buildDevInitData(), true);
+    await authorizeWithSubscriptionCheck(buildDevInitData(), true);
     return;
   }
 
   const initData = (await waitForTelegramInitData({ signal, timeoutMs: 3000 })).trim();
   if (initData) {
-    try {
-      await authorize(initData, false);
-      return;
-    } catch (error) {
-      if (IS_PROD_DOMAIN) {
-        throw error;
-      }
-    }
+    await authorizeWithSubscriptionCheck(initData, false);
+    return;
   }
 
-  if (IS_PROD_DOMAIN) {
-    throw new Error("Telegram initData is missing in production environment");
+  if (!IS_LOCAL_DEV_HOST) {
+    throw new Error("Telegram initData is missing outside local development");
   }
 
-  await authorize(buildDevInitData(), true);
+  await authorizeWithSubscriptionCheck(buildDevInitData(), true);
 }
 
 export async function refreshAccessToken(): Promise<string | null> {

@@ -5,14 +5,18 @@
 
 # Debug / IDE
 .cursor/
+.idea/
 
 # Node
 node_modules/
 dist/
+*.tsbuildinfo
+tmp-playwright-*.png
 
 # Backend
 backend/.gopath/
 backend/.gocache/
+backend/*.exe
 
 # Bot
 bot/data/
@@ -23,3 +27,12 @@ bot/__pycache__/
 # Admin panel
 admin_panel/admin_data.db
 admin_panel/instance/
+
+# Docker frontend build artifacts
+docker/frontend-dist/
+
+# Output
+output/
+
+# Load test results
+test-results/

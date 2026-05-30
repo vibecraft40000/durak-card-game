@@ -7,10 +7,8 @@ import { canPlayCard } from "@/entities/game/lib/canPlayCard";
 import { PlayingCard } from "@/shared/ui/PlayingCard";
 import { hapticImpact, hapticSelection } from "@/shared/lib/telegram";
 
-/** ANIMATION-SPEC: maxSpread 40°, более плотный веер как на макете */
 const FAN_SPREAD = 40;
 const SPRING = { type: "spring" as const, stiffness: 280, damping: 22 };
-/** Invalid drop: shake 8px, 140ms */
 const REJECT_SHAKE_PX = 8;
 const REJECT_DURATION_MS = 140;
 
@@ -21,7 +19,7 @@ type PlayerHandFanProps = {
   canAct: boolean;
   interactionLocked?: boolean;
   tableRectRef: React.RefObject<HTMLDivElement | null>;
-  onPlayCard: (cardId: string, action: "attack" | "defend") => void;
+  onPlayCard: (cardId: string, action: "attack" | "defend" | "throw" | "shuler_play") => void;
   onReject?: () => void;
 };
 
@@ -39,15 +37,20 @@ export const PlayerHandFan = memo(function PlayerHandFan({
   const [rejectId, setRejectId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const getFanStyle = useCallback((index: number) => {
-    const n = Math.max(1, cards.length);
-    const step = n > 1 ? FAN_SPREAD / (n - 1) : 0;
-    const rotation = -FAN_SPREAD / 2 + index * step;
-    return {
-      transformOrigin: "bottom center",
-      rotate: rotation,
-    };
-  }, [cards.length]);
+  const getFanStyle = useCallback(
+    (index: number) => {
+      const count = Math.max(1, cards.length);
+      const centered = index - (count - 1) / 2;
+      const spread = count > 1 ? Math.min(58, 22 + count * 4) : 0;
+      const step = count > 1 ? spread / (count - 1) : 0;
+      return {
+        rotate: -spread / 2 + index * step,
+        x: centered * (count > 5 ? 50 : 56),
+        y: Math.abs(centered) * 8,
+      };
+    },
+    [cards.length],
+  );
 
   const handleDragStart = useCallback(() => {
     hapticSelection();
@@ -74,7 +77,6 @@ export const PlayerHandFan = memo(function PlayerHandFan({
       });
 
       if (result.outcome === "reject_silent") return;
-
       if (result.outcome === "reject") {
         setRejectId(result.cardId);
         hapticImpact("light");
@@ -86,7 +88,7 @@ export const PlayerHandFan = memo(function PlayerHandFan({
       hapticImpact("medium");
       onPlayCard(result.cardId, result.action);
     },
-    [canAct, matchState, currentUserId, interactionLocked, onPlayCard, onReject, tableRectRef],
+    [currentUserId, interactionLocked, matchState, onPlayCard, onReject, tableRectRef],
   );
 
   if (cards.length === 0) {
@@ -100,7 +102,9 @@ export const PlayerHandFan = memo(function PlayerHandFan({
         const isReject = rejectId === card.id;
         const validation = canPlayCard(card, matchState, currentUserId);
         const canDrag = canAct && !interactionLocked && validation.valid;
-         const isPlayable = validation.valid && canAct && !interactionLocked;
+        const isPlayable = validation.valid && canAct && !interactionLocked;
+        const fanStyle = getFanStyle(index);
+        const centeredIndex = index - (cards.length - 1) / 2;
 
         return (
           <motion.div
@@ -108,15 +112,15 @@ export const PlayerHandFan = memo(function PlayerHandFan({
             layout
             className="hand-fan__card-wrap"
             style={{
-              ...getFanStyle(index),
-              zIndex: isDragging ? 100 : index,
+              transformOrigin: "bottom center",
+              zIndex: isDragging ? 100 : 100 - Math.abs(centeredIndex),
             }}
             initial={false}
             animate={{
               scale: isDragging ? 1.12 : 1,
-              y: isDragging ? 0 : 0,
-              rotate: isDragging ? 0 : getFanStyle(index).rotate,
-              x: 0,
+              y: isDragging ? -24 : fanStyle.y,
+              rotate: isDragging ? 0 : fanStyle.rotate,
+              x: fanStyle.x,
             }}
             transition={SPRING}
           >
@@ -133,7 +137,7 @@ export const PlayerHandFan = memo(function PlayerHandFan({
                   ? "0 18px 48px rgba(0,0,0,0.55)"
                   : isReject
                     ? "0 6px 20px rgba(0,0,0,0.35)"
-                    : "0 6px 20px rgba(0,0,0,0.35)",
+                    : "0 8px 24px rgba(0,0,0,0.42)",
                 x: isReject ? [0, -REJECT_SHAKE_PX, REJECT_SHAKE_PX, -REJECT_SHAKE_PX, REJECT_SHAKE_PX, 0] : 0,
               }}
               transition={
@@ -142,12 +146,7 @@ export const PlayerHandFan = memo(function PlayerHandFan({
                   : { type: "spring", stiffness: 340, damping: 24 }
               }
             >
-              <PlayingCard
-                rank={card.rank}
-                suit={card.suit}
-                variant="hand"
-                dimmed={!isPlayable}
-              />
+              <PlayingCard rank={card.rank} suit={card.suit} variant="hand" dimmed={!isPlayable} />
             </motion.div>
           </motion.div>
         );

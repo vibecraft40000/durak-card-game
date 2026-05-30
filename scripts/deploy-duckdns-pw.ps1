@@ -1,10 +1,10 @@
-# Deploy to durakonline.duckdns.org VPS with password
+# Deploy to VPS with password
 # Usage: .\deploy-duckdns-pw.ps1
 # You will be prompted for password (or pass as $env:DEPLOY_PW)
 
 param(
     [string]$Password = $env:DEPLOY_PW,
-    [string]$VpsHost = "72.56.74.7",
+    [string]$VpsHost = "YOUR_SERVER_IP",
     [string]$User = "root",
     [string]$RemotePath = "/root/durakonline"
 )
@@ -58,7 +58,7 @@ try {
     if ($result.Error) { Write-Host $result.Error -ForegroundColor Yellow }
 
     Write-Host ""
-    Write-Host "Done. App: https://durakonline.duckdns.org" -ForegroundColor Green
+    Write-Host "Done. App: https://your-domain.example" -ForegroundColor Green
 } finally {
     if ($session) { Remove-SSHSession -SessionId $session.SessionId -ErrorAction SilentlyContinue }
 }

@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Setup VPS as proxy - upload nginx config. Run once."""
+import os
 import sys
 from pathlib import Path
 import paramiko
 
-VPS, USER, PASS = "72.56.74.7", "root", "azfzD1V+*gkevz"
+VPS = os.environ.get("VPS_HOST", "YOUR_SERVER_IP")
+USER = os.environ.get("VPS_USER", "root")
+PASS = os.environ.get("VPS_PASSWORD", "").strip()
 CONF = Path(__file__).parent.parent / "docker" / "nginx-vps-proxy.conf"
+
+if not PASS:
+    print("VPS_PASSWORD is required. The previously hardcoded VPS credential was removed from the repo and must be rotated out of band before reuse.")
+    sys.exit(1)
 
 def main():
     if not CONF.exists():

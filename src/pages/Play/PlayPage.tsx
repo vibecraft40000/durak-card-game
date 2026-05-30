@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { GameMode, Room } from "@/entities/match/types";
 import { getRooms } from "@/shared/api/rooms";
@@ -9,10 +9,8 @@ import { AppButton } from "@/shared/ui/Button";
 import {
   ArrowRightThinIcon,
   CheckCircleIcon,
-  ClassicIcon,
   CheaterIcon,
   DeckIcon,
-  DrawIcon,
   FairPlayIcon,
   PodkidnoyIcon,
   TransferIcon,
@@ -23,7 +21,6 @@ import { CardSkeleton, EmptyStateBlock, ErrorStateBlock } from "@/shared/ui/Stat
 type FilterState = {
   mode: GameMode | "all";
   fairness: "Честная игра" | "Шулер" | "all";
-  style: "Классика" | "Ничья" | "all";
   maxStake: number;
   deck: 24 | 36 | 52 | "all";
   maxPlayers: 2 | 3 | 4 | "all";
@@ -34,7 +31,6 @@ const FILTERS_STORAGE_KEY = "play.filters.v1";
 const INITIAL_FILTERS: FilterState = {
   mode: "all",
   fairness: "all",
-  style: "all",
   maxStake: 500,
   deck: "all",
   maxPlayers: "all",
@@ -46,10 +42,6 @@ function isValidMode(value: unknown): value is GameMode | "all" {
 
 function isValidFairness(value: unknown): value is FilterState["fairness"] {
   return value === "all" || value === "Честная игра" || value === "Шулер";
-}
-
-function isValidStyle(value: unknown): value is FilterState["style"] {
-  return value === "all" || value === "Классика" || value === "Ничья";
 }
 
 function isValidDeck(value: unknown): value is FilterState["deck"] {
@@ -68,7 +60,6 @@ function normalizeFilters(partial: Partial<FilterState>): FilterState {
 
   const mode = isValidMode(partial.mode) ? partial.mode : INITIAL_FILTERS.mode;
   const fairness = isValidFairness(partial.fairness) ? partial.fairness : INITIAL_FILTERS.fairness;
-  const style = isValidStyle(partial.style) ? partial.style : INITIAL_FILTERS.style;
   const deck = isValidDeck(partial.deck) ? partial.deck : INITIAL_FILTERS.deck;
   const maxPlayers = isValidMaxPlayers(partial.maxPlayers)
     ? partial.maxPlayers
@@ -77,7 +68,6 @@ function normalizeFilters(partial: Partial<FilterState>): FilterState {
   return {
     mode,
     fairness,
-    style,
     maxStake,
     deck,
     maxPlayers,
@@ -90,7 +80,6 @@ function parseFiltersFromSearch(search: string): FilterState | null {
   const hasAny =
     params.has("mode") ||
     params.has("fairness") ||
-    params.has("style") ||
     params.has("deck") ||
     params.has("maxPlayers") ||
     params.has("maxStake");
@@ -99,7 +88,6 @@ function parseFiltersFromSearch(search: string): FilterState | null {
 
   const modeParam = params.get("mode");
   const fairnessParam = params.get("fairness");
-  const styleParam = params.get("style");
   const deckParam = params.get("deck");
   const maxPlayersParam = params.get("maxPlayers");
   const maxStakeParam = params.get("maxStake");
@@ -111,9 +99,6 @@ function parseFiltersFromSearch(search: string): FilterState | null {
   }
   if (fairnessParam) {
     partial.fairness = fairnessParam as FilterState["fairness"];
-  }
-  if (styleParam) {
-    partial.style = styleParam as FilterState["style"];
   }
   if (deckParam) {
     const n = Number(deckParam);
@@ -156,6 +141,18 @@ function roomMatchesMode(roomMode: string, modeFilter: FilterState["mode"]) {
   return raw.includes("перевод") || raw.includes("perevod");
 }
 
+function roomMatchesFairness(roomMode: string, fairnessFilter: FilterState["fairness"]) {
+  if (fairnessFilter === "all") {
+    return true;
+  }
+  const raw = roomMode.toLowerCase();
+  const isShuler = raw.includes("шулер") || raw.includes("shuler");
+  if (fairnessFilter === "Шулер") {
+    return isShuler;
+  }
+  return !isShuler;
+}
+
 function formatModeLabel(mode: string, t: (key: string, params?: Record<string, string | number>) => string) {
   const raw = mode.toLowerCase();
   const isPodkidnoy = raw.includes("подкид") || raw.includes("podkid");
@@ -172,6 +169,37 @@ function formatModeLabel(mode: string, t: (key: string, params?: Record<string, 
     return baseLabel;
   }
   return `${baseLabel} ${t("play.types.shuler")}`;
+}
+
+
+
+
+
+
+
+function matchRoomModeStable(roomMode: string, modeFilter: FilterState["mode"]) {
+  if (modeFilter === "all") {
+    return true;
+  }
+  const raw = roomMode.toLowerCase();
+  const requestedMode = String(modeFilter).toLowerCase();
+  const isPodkidnoy = raw.includes("\u043f\u043e\u0434\u043a\u0438\u0434") || raw.includes("podkid");
+  const isPerevodnoy = raw.includes("\u043f\u0435\u0440\u0435\u0432\u043e\u0434") || raw.includes("perevod");
+  const wantsPodkidnoy =
+    requestedMode.includes("\u043f\u043e\u0434\u043a\u0438\u0434") || requestedMode.includes("podkid");
+  return wantsPodkidnoy ? isPodkidnoy : isPerevodnoy;
+}
+
+function matchRoomFairnessStable(roomMode: string, fairnessFilter: FilterState["fairness"]) {
+  if (fairnessFilter === "all") {
+    return true;
+  }
+  const raw = roomMode.toLowerCase();
+  const requestedFairness = String(fairnessFilter).toLowerCase();
+  const isShuler = raw.includes("\u0448\u0443\u043b\u0435\u0440") || raw.includes("shuler");
+  const wantsShuler =
+    requestedFairness.includes("\u0448\u0443\u043b\u0435\u0440") || requestedFairness.includes("shuler");
+  return wantsShuler ? isShuler : !isShuler;
 }
 
 export function PlayPage() {
@@ -200,7 +228,7 @@ export function PlayPage() {
   }, []);
 
   useEffect(() => {
-    // Автообновление списка комнат каждые 5 секунд
+    // РђРІС‚РѕРѕР±РЅРѕРІР»РµРЅРёРµ СЃРїРёСЃРєР° РєРѕРјРЅР°С‚ РєР°Р¶РґС‹Рµ 5 СЃРµРєСѓРЅРґ
     const intervalId = window.setInterval(() => {
       void loadRooms();
     }, 5000);
@@ -239,9 +267,6 @@ export function PlayPage() {
     if (filters.fairness !== "all") {
       params.set("fairness", filters.fairness);
     }
-    if (filters.style !== "all") {
-      params.set("style", filters.style);
-    }
     if (filters.deck !== "all") {
       params.set("deck", String(filters.deck));
     }
@@ -262,13 +287,14 @@ export function PlayPage() {
 
   const filteredRooms = useMemo(() => {
     return rooms.filter((room) => {
-      const byMode = roomMatchesMode(room.mode, filters.mode);
+      const byMode = matchRoomModeStable(room.mode, filters.mode);
+      const byFairness = matchRoomFairnessStable(room.mode, filters.fairness);
       const byStake = room.stakeUsd <= filters.maxStake;
       const byDeck = filters.deck === "all" ? true : room.deck === filters.deck;
       const byPlayers = filters.maxPlayers === "all" ? true : room.maxPlayers === filters.maxPlayers;
-      return byMode && byStake && byDeck && byPlayers;
+      return byMode && byFairness && byStake && byDeck && byPlayers;
     });
-  }, [filters.deck, filters.maxPlayers, filters.maxStake, filters.mode, rooms]);
+  }, [filters.deck, filters.fairness, filters.maxPlayers, filters.maxStake, filters.mode, rooms]);
 
   const quickRoom = useMemo(
     () => filteredRooms.find((room) => room.players < room.maxPlayers) ?? null,
@@ -300,8 +326,6 @@ export function PlayPage() {
   const isModeTransfer = filters.mode === "Переводной";
   const isFairFairPlay = filters.fairness === "Честная игра";
   const isFairCheater = filters.fairness === "Шулер";
-  const isStyleClassic = filters.style === "Классика";
-  const isStyleDraw = filters.style === "Ничья";
 
   return (
     <>
@@ -312,7 +336,7 @@ export function PlayPage() {
             <div className="play-screen__head-balance-main">
               <span className="play-screen__head-balance-symbol">$</span>
               <span className="play-screen__head-balance-amount">
-                {balance === null ? "—" : balance.toFixed(0)}
+                {balance === null ? "вЂ”" : balance.toFixed(0)}
               </span>
             </div>
             <AppButton
@@ -396,12 +420,6 @@ export function PlayPage() {
                   icon: FairPlayIcon,
                 },
                 {
-                  title: t("play.types.classic"),
-                  group: "style" as const,
-                  styleValue: "Классика" as const,
-                  icon: ClassicIcon,
-                },
-                {
                   title: t("play.types.perevodnoy"),
                   group: "mode" as const,
                   modeValue: "Переводной" as const,
@@ -413,19 +431,11 @@ export function PlayPage() {
                   fairnessValue: "Шулер" as const,
                   icon: CheaterIcon,
                 },
-                {
-                  title: t("play.types.draw"),
-                  group: "style" as const,
-                  styleValue: "Ничья" as const,
-                  icon: DrawIcon,
-                },
               ].map((item, index) => {
                 const isActive =
                   item.group === "mode"
                     ? filters.mode === item.modeValue
-                    : item.group === "fairness"
-                      ? filters.fairness === item.fairnessValue
-                      : filters.style === item.styleValue;
+                    : filters.fairness === item.fairnessValue;
 
                 return (
                   <button
@@ -445,10 +455,7 @@ export function PlayPage() {
                             prev.fairness === item.fairnessValue ? "all" : item.fairnessValue;
                           return { ...prev, fairness: nextFairness };
                         }
-
-                        const nextStyle =
-                          prev.style === item.styleValue ? "all" : item.styleValue;
-                        return { ...prev, style: nextStyle };
+                        return prev;
                       })
                     }
                   >
@@ -476,7 +483,6 @@ export function PlayPage() {
                   maxPlayers: "all",
                   mode: "all",
                   fairness: "all",
-                  style: "all",
                 }))
               }
             >
@@ -540,13 +546,6 @@ export function PlayPage() {
                 </span>
                 <span
                   className={`play-quick-filters__icon ${
-                    isStyleDraw ? "play-quick-filters__icon--active" : ""
-                  }`}
-                >
-                  <DrawIcon size={18} />
-                </span>
-                <span
-                  className={`play-quick-filters__icon ${
                     isModeTransfer ? "play-quick-filters__icon--active" : ""
                   }`}
                 >
@@ -558,13 +557,6 @@ export function PlayPage() {
                   }`}
                 >
                   <CheaterIcon size={18} />
-                </span>
-                <span
-                  className={`play-quick-filters__icon ${
-                    isStyleClassic ? "play-quick-filters__icon--active" : ""
-                  }`}
-                >
-                  <ClassicIcon size={18} />
                 </span>
               </div>
             </button>
@@ -696,4 +688,5 @@ export function PlayPage() {
     </>
   );
 }
+
 

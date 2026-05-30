@@ -1,5 +1,5 @@
 import type { GameState } from "@/store/game.store";
-import type { MatchStatePayload, Seat } from "@/shared/api/ws/types";
+import type { MatchAffordances, MatchStatePayload, Seat } from "@/shared/api/ws/types";
 
 function rawPhase(ms: MatchStatePayload | null): string {
   return typeof ms?.phase === "string" ? ms.phase : "";
@@ -30,6 +30,10 @@ function getMyHandCount(ms: MatchStatePayload | null, currentUserId: string | nu
     if (seat && typeof seat.cardCount === "number") return seat.cardCount;
   }
   return 0;
+}
+
+function getAffordances(ms: MatchStatePayload | null): MatchAffordances | null {
+  return ms?.affordances ?? null;
 }
 
 /** Current game phase from match state */
@@ -92,6 +96,10 @@ export function selectCanAttack(
 ): boolean {
   const ms = state.matchState;
   if (!ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canAttack);
+  }
   if (!selectIsAttacker(state, currentUserId)) return false;
 
   if (typeof ms.capacityOnTable === "number" && ms.capacityOnTable > 0) {
@@ -108,8 +116,48 @@ export function selectCanDefend(
 ): boolean {
   const ms = state.matchState;
   if (!ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canDefend);
+  }
   if (!selectIsDefender(state, currentUserId)) return false;
 
+  if (getTableCardCount(ms) === 0) return false;
+  return getMyHandCount(ms, currentUserId) > 0;
+}
+
+/** Whether the current user can throw in an extra attack card (not attacker/defender). */
+export function selectCanThrow(
+  state: GameState,
+  currentUserId: string | null,
+): boolean {
+  const ms = state.matchState;
+  if (!ms || !currentUserId || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canThrowIn);
+  }
+  if (rawPhase(ms) !== "attack") return false;
+  if (selectIsMyTurn(state, currentUserId)) return false;
+  if (typeof ms.defenderPlayerId === "string" && ms.defenderPlayerId === currentUserId) return false;
+  if (getTableCardCount(ms) === 0) return false;
+  return getMyHandCount(ms, currentUserId) > 0;
+}
+
+/** Whether the current user can use shuler play on defense */
+export function selectCanShulerPlay(
+  state: GameState,
+  currentUserId: string | null,
+): boolean {
+  const ms = state.matchState;
+  if (!ms || !currentUserId || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canShulerPlay);
+  }
+  if (rawPhase(ms) !== "defend") return false;
+  if (!selectIsMyTurn(state, currentUserId)) return false;
+  if (!Array.isArray(ms.shuler?.activePlayers) || !ms.shuler.activePlayers.includes(currentUserId)) return false;
   if (getTableCardCount(ms) === 0) return false;
   return getMyHandCount(ms, currentUserId) > 0;
 }
@@ -121,6 +169,10 @@ export function selectCanTake(
 ): boolean {
   const ms = state.matchState;
   if (!ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canTake);
+  }
   if (!selectIsDefender(state, currentUserId)) return false;
   return getTableCardCount(ms) > 0;
 }
@@ -132,8 +184,42 @@ export function selectCanPass(
 ): boolean {
   const ms = state.matchState;
   if (!ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canPass);
+  }
   if (!selectIsAttacker(state, currentUserId)) return false;
   return getTableCardCount(ms) > 0;
+}
+
+export function selectCanTranslate(
+  state: GameState,
+  currentUserId: string | null,
+): boolean {
+  const ms = state.matchState;
+  if (!ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canTranslate);
+  }
+  const rawMode = (ms.mode ?? "").toLowerCase();
+  const isTranslateMode = rawMode.includes("perevod") || rawMode.includes("перевод");
+  return isTranslateMode && selectCanDefend(state, currentUserId);
+}
+
+export function selectCanShulerReport(
+  state: GameState,
+  currentUserId: string | null,
+): boolean {
+  const ms = state.matchState;
+  if (!ms || !currentUserId || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canShulerReport);
+  }
+  const shulerWindowOpen = Boolean(ms.shuler?.isWindowOpen);
+  const shulerPlayers = new Set(ms.shuler?.activePlayers ?? []);
+  return shulerWindowOpen && !shulerPlayers.has(currentUserId);
 }
 
 /** Whether the user can perform any game action */
@@ -143,12 +229,20 @@ export function selectCanAct(
 ): boolean {
   const ms = state.matchState;
   if (state.status !== "ready" || !ms || selectCurrentPhase(state) !== "playing") return false;
+  const affordances = getAffordances(ms);
+  if (affordances) {
+    return Boolean(affordances.canAct);
+  }
 
   return (
     selectCanAttack(state, currentUserId) ||
     selectCanDefend(state, currentUserId) ||
+    selectCanTranslate(state, currentUserId) ||
+    selectCanShulerPlay(state, currentUserId) ||
+    selectCanThrow(state, currentUserId) ||
     selectCanTake(state, currentUserId) ||
-    selectCanPass(state, currentUserId)
+    selectCanPass(state, currentUserId) ||
+    selectCanShulerReport(state, currentUserId)
   );
 }
 

@@ -1,9 +1,9 @@
-# Deploy to durakonline.duckdns.org (manual - enter password when prompted)
-# Password: (your root password for 72.56.74.7)
+# Deploy to your server (manual - enter password when prompted)
+# Password: (your root password for YOUR_SERVER_IP)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$VpsHost = "72.56.74.7"
+$VpsHost = "YOUR_SERVER_IP"
 
 Set-Location $ProjectRoot
 
@@ -28,4 +28,4 @@ Write-Host "6. Running setup on VPS (enter password)..." -ForegroundColor Cyan
 ssh root@$VpsHost "cd /root/durakonline && sh scripts/setup-duckdns-ssl.sh"
 
 Write-Host ""
-Write-Host "Done. App: https://durakonline.duckdns.org" -ForegroundColor Green
+Write-Host "Done. App: https://your-domain.example" -ForegroundColor Green

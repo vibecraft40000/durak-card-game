@@ -1,5 +1,5 @@
-# VPS production: API + frontend (static) behind one Nginx
-# Run from project root on VPS: docker compose -f docker/docker-compose.vps.yml up -d --build
+# VPS production: API + frontend behind Nginx
+# Run: docker compose -f docker/docker-compose.vps.yml up -d --build
 
 services:
   postgres:
@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: durak
       POSTGRES_USER: durak
-      POSTGRES_PASSWORD: durak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-durak}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -33,7 +33,7 @@ services:
         "-path",
         "/migrations",
         "-database",
-        "postgres://durak:durak@postgres:5432/durak?sslmode=disable",
+        "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable",
         "up",
       ]
     volumes:
@@ -49,15 +49,15 @@ services:
       dockerfile: Dockerfile
     environment:
       INSTANCE_ID: "api-1"
+      ENV: "${ENV:-production}"
       PORT: "8080"
-      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      POSTGRES_URL: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       JWT_SECRET: "${JWT_SECRET:-change-me-in-production}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       ALLOW_DEV_TELEGRAM_AUTH: "${ALLOW_DEV_TELEGRAM_AUTH:-false}"
-      DISABLE_MONEY: "${DISABLE_MONEY:-false}"
       ROOM_WAIT_TIMEOUT: "5m"
-      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-https://72-56-74-7.sslip.io}"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-https://your-domain.example}"
     depends_on:
       postgres:
         condition: service_healthy

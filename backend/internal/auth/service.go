@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"durakonline/backend/internal/users"
@@ -15,6 +17,14 @@ import (
 )
 
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")
+var ErrInvalidWSTicket = errors.New("invalid ws ticket")
+
+const wsTicketTTL = 30 * time.Second
+
+type wsTicketClaims struct {
+	UserID string `json:"userId"`
+	RoomID string `json:"roomId"`
+}
 
 type Service struct {
 	users      *users.Repository
@@ -40,6 +50,10 @@ func NewService(usersRepo *users.Repository, redisClient *redis.Client, jwtSecre
 
 func (s *Service) ReplayTTL() time.Duration {
 	return s.replayTTL
+}
+
+func (s *Service) WSTicketTTL() time.Duration {
+	return wsTicketTTL
 }
 
 func (s *Service) ExchangeTelegram(ctx context.Context, tgUser TelegramUser, referralCode string) (users.User, string, string, error) {
@@ -110,10 +124,70 @@ func refreshKey(token string) string {
 	return fmt.Sprintf("auth:refresh:%s", token)
 }
 
+func wsTicketKey(ticket string) string {
+	return fmt.Sprintf("auth:ws_ticket:%s", ticket)
+}
+
+func (s *Service) IssueWSTicket(ctx context.Context, userID, roomID string) (string, error) {
+	if s.redis == nil {
+		return "", errors.New("redis client is required for ws tickets")
+	}
+	userID = strings.TrimSpace(userID)
+	roomID = strings.TrimSpace(roomID)
+	if userID == "" || roomID == "" {
+		return "", errors.New("userID and roomID are required")
+	}
+
+	ticket := uuid.NewString()
+	payload, err := json.Marshal(wsTicketClaims{
+		UserID: userID,
+		RoomID: roomID,
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := s.redis.Set(ctx, wsTicketKey(ticket), payload, wsTicketTTL).Err(); err != nil {
+		return "", err
+	}
+	return ticket, nil
+}
+
+func (s *Service) ConsumeWSTicket(ctx context.Context, ticket, roomID string) (string, error) {
+	if s.redis == nil {
+		return "", errors.New("redis client is required for ws tickets")
+	}
+	ticket = strings.TrimSpace(ticket)
+	roomID = strings.TrimSpace(roomID)
+	if ticket == "" || roomID == "" {
+		return "", ErrInvalidWSTicket
+	}
+
+	payload, err := s.redis.GetDel(ctx, wsTicketKey(ticket)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return "", ErrInvalidWSTicket
+		}
+		return "", err
+	}
+
+	var claims wsTicketClaims
+	if err := json.Unmarshal([]byte(payload), &claims); err != nil {
+		return "", ErrInvalidWSTicket
+	}
+	if claims.UserID == "" || claims.RoomID == "" || claims.RoomID != roomID {
+		return "", ErrInvalidWSTicket
+	}
+
+	return claims.UserID, nil
+}
+
 func (s *Service) ParseJWT(tokenString string) (string, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if token == nil || token.Method == nil || token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, errors.New("unexpected signing method")
+		}
 		return s.jwtSecret, nil
-	})
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil || !token.Valid {
 		return "", errors.New("invalid token")
 	}

@@ -8,7 +8,7 @@ import type { DropZone } from "./zones";
 import { canPlayCard } from "@/entities/game/lib/canPlayCard";
 
 export type ValidationResult =
-  | { valid: true; action: "attack" | "defend" }
+  | { valid: true; action: "attack" | "defend" | "throw" | "shuler_play" }
   | { valid: false };
 
 /**

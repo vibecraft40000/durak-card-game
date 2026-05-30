@@ -34,6 +34,8 @@ type Handler struct {
 	notifyBotToken     string
 	notifyChatIDs      []int64
 	converter          *money.Converter
+	depositsEnabled    bool
+	withdrawalsEnabled bool
 	withdrawCardFeeBps int
 	withdrawCryptoBps  int
 }
@@ -54,6 +56,8 @@ func NewHandler(token string, testnet bool, txRepo *transactions.Repository, r *
 		webappURL:          webappURL,
 		log:                log,
 		converter:          converter,
+		depositsEnabled:    true,
+		withdrawalsEnabled: false,
 		withdrawCardFeeBps: 200,
 		withdrawCryptoBps:  0,
 	}
@@ -76,6 +80,16 @@ func (h *Handler) WithMoneyConverter(converter *money.Converter) *Handler {
 	if converter != nil {
 		h.converter = converter
 	}
+	return h
+}
+
+func (h *Handler) WithDepositsEnabled(enabled bool) *Handler {
+	h.depositsEnabled = enabled
+	return h
+}
+
+func (h *Handler) WithWithdrawalsEnabled(enabled bool) *Handler {
+	h.withdrawalsEnabled = enabled
 	return h
 }
 
@@ -110,12 +124,27 @@ type withdrawNotification struct {
 	BalanceBefore  float64
 }
 
+func (h *Handler) DepositsAvailable() bool {
+	return h.depositsEnabled
+}
+
+func (h *Handler) WithdrawalsAvailable() bool {
+	// Safe beta mode: until a secure pending/manual-review flow exists,
+	// withdrawals stay server-disabled and must not debit user balances.
+	return false
+}
+
 func (h *Handler) CreateWithdraw(walletService *wallet.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		user, ok := middleware.UserFromContext(ctx)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !h.WithdrawalsAvailable() {
+			h.log.Warn("withdraw rejected: safe beta mode", zap.String("user_id", user.ID))
+			http.Error(w, "withdrawals are disabled during beta until a secure manual review flow is implemented", http.StatusForbidden)
 			return
 		}
 		if user.TelegramID == 0 {
@@ -285,6 +314,11 @@ func (h *Handler) CreateDepositInvoice(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.UserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !h.DepositsAvailable() {
+		h.log.Warn("deposit rejected: kill switch disabled path", zap.String("user_id", user.ID))
+		http.Error(w, "deposits are temporarily unavailable during beta maintenance", http.StatusForbidden)
 		return
 	}
 

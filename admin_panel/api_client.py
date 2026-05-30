@@ -6,16 +6,37 @@ import logging
 from typing import Any
 
 import requests
+from flask_login import current_user
 
 logger = logging.getLogger(__name__)
 
 
+def _current_admin_actor() -> str:
+    try:
+        if not getattr(current_user, "is_authenticated", False):
+            return ""
+        username = str(getattr(current_user, "username", "") or "").strip()
+        admin_id = ""
+        get_id = getattr(current_user, "get_id", None)
+        if callable(get_id):
+            admin_id = str(get_id() or "").strip()
+        if username and admin_id:
+            return f"{username}#{admin_id}"
+        return username or admin_id
+    except RuntimeError:
+        return ""
+
+
 def _headers(admin_secret: str) -> dict[str, str]:
-    return {
+    headers = {
         "X-Admin-Secret": admin_secret,
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
+    actor = _current_admin_actor()
+    if actor:
+        headers["X-Admin-Actor"] = actor
+    return headers
 
 
 def _request(

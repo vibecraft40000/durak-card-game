@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """SSH reverse tunnel via paramiko: VPS:9080 -> localhost:5173"""
+import os
 import socket
 import select
 import threading
 import paramiko
 
 import sys
-VPS, USER, PASS = "72.56.74.7", "root", "azfzD1V+*gkevz"
+VPS = os.environ.get("VPS_HOST", "YOUR_SERVER_IP")
+USER = os.environ.get("VPS_USER", "root")
+PASS = os.environ.get("VPS_PASSWORD", "").strip()
 REMOTE_PORT = 9080
 LOCAL_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 5173
+
+if not PASS:
+    print("VPS_PASSWORD is required. The previously hardcoded VPS credential was removed from the repo and must be rotated out of band before reuse.")
+    sys.exit(1)
 
 def main():
     print("Connecting to VPS...")
@@ -18,7 +25,7 @@ def main():
     transport = client.get_transport()
     transport.request_port_forward("127.0.0.1", REMOTE_PORT)
     print(f"Tunnel OK: VPS:{REMOTE_PORT} -> localhost:{LOCAL_PORT}")
-    print("App: https://72-56-74-7.sslip.io")
+    print("App: https://your-server-ip.sslip.io")
     try:
         while transport.is_active():
             chan = transport.accept(10)

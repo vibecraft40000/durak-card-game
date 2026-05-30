@@ -82,6 +82,13 @@ export async function mockHttpRequest(
     return { accessToken: "mock-access-token" };
   }
 
+  if (method === "POST" && path === "/api/ws-ticket") {
+    return {
+      ticket: `mock-ws-ticket-${Date.now()}`,
+      expiresInSec: 30,
+    };
+  }
+
   if (method === "GET" && path === "/api/profile") {
     return {
       user: {

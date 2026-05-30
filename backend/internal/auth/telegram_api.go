@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -70,4 +72,44 @@ func FetchUserPhotoURL(ctx context.Context, botToken string, telegramID int64) s
 		return ""
 	}
 	return "https://api.telegram.org/file/bot" + botToken + "/" + out2.Result.FilePath
+}
+
+// CheckChannelMembership returns true if the user is a member (or admin/creator) of the given channel.
+// Bot must be an administrator in the channel. channelID is the Telegram chat id (e.g. "-1001234567890").
+// Returns false on API errors or if user is left/kicked.
+func CheckChannelMembership(ctx context.Context, botToken string, channelID string, telegramUserID int64) bool {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return true
+	}
+	if botToken == "" || botToken == "dev-bot-token" {
+		return true
+	}
+	base := "https://api.telegram.org/bot" + botToken
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		base+"/getChatMember?chat_id="+url.QueryEscape(channelID)+"&user_id="+strconv.FormatInt(telegramUserID, 10), nil)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	var out struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Status string `json:"status"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || !out.OK {
+		return false
+	}
+	switch strings.ToLower(out.Result.Status) {
+	case "creator", "administrator", "member", "restricted":
+		return true
+	default:
+		return false
+	}
 }

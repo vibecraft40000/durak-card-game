@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { getFriends, removeFriend, type FriendEntry } from "@/shared/api/friends";
+import { getFriendRequests, getFriends, removeFriend, type FriendEntry } from "@/shared/api/friends";
 import { getReferralSummary, type ReferralStats } from "@/shared/api/referrals";
 import { getProfile } from "@/shared/api/user";
-import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { buildTelegramMiniAppLink } from "@/shared/lib/telegram";
+import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, TrashIcon, UsersIcon } from "@/shared/ui/Icons";
 import { ConfirmModal } from "@/shared/ui/StateBlocks";
 
@@ -38,6 +38,7 @@ export function FriendsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [incomingRequestsCount, setIncomingRequestsCount] = useState<number | null>(null);
 
   const [refLink, setRefLink] = useState(buildTelegramMiniAppLink("ref_default"));
   const [refStats, setRefStats] = useState<ReferralStats | null>(null);
@@ -47,6 +48,7 @@ export function FriendsPage() {
   useEffect(() => {
     void loadFriends();
     void loadReferralSummary();
+    void loadIncomingRequests();
   }, []);
 
   async function loadFriends() {
@@ -65,13 +67,19 @@ export function FriendsPage() {
     }
   }
 
+  async function loadIncomingRequests() {
+    try {
+      const items = await getFriendRequests();
+      setIncomingRequestsCount(items.length);
+    } catch {
+      setIncomingRequestsCount(null);
+    }
+  }
+
   async function loadReferralSummary() {
     setReferralError(null);
     try {
-      const [profileResponse, referralSummary] = await Promise.all([
-        getProfile(),
-        getReferralSummary(20),
-      ]);
+      const [profileResponse, referralSummary] = await Promise.all([getProfile(), getReferralSummary(20)]);
       const referralCode = (referralSummary.referralCode || profileResponse.user.referral_code) ?? "ref";
       setRefLink(buildTelegramMiniAppLink(`ref_${referralCode}`));
       setRefStats(referralSummary.stats);
@@ -111,6 +119,32 @@ export function FriendsPage() {
         <Link className="icon-button" to="/profile/friends/add">
           <UsersIcon size={17} />
         </Link>
+      </div>
+
+      <div className="card card--compact">
+        <div className="card__row">
+          <div>
+            <div className="card__label">
+              {incomingRequestsCount && incomingRequestsCount > 0
+                ? tr("Входящие заявки", "Вхідні запити")
+                : tr("Добавить друга", "Додати друга")}
+            </div>
+            <div className="card__hint">
+              {incomingRequestsCount && incomingRequestsCount > 0
+                ? tr(
+                    `Новых заявок: ${incomingRequestsCount}. Откройте этот раздел, чтобы принять их.`,
+                    `Нових запитів: ${incomingRequestsCount}. Відкрийте цей розділ, щоб прийняти їх.`,
+                  )
+                : tr(
+                    "Поиск друзей и входящие заявки находятся на следующем экране.",
+                    "Пошук друзів та вхідні запити знаходяться на наступному екрані.",
+                  )}
+            </div>
+          </div>
+          <Link className="button button--ghost" to="/profile/friends/add">
+            {incomingRequestsCount && incomingRequestsCount > 0 ? tr("Открыть", "Відкрити") : tr("Перейти", "Перейти")}
+          </Link>
+        </div>
       </div>
 
       {isLoading && <div className="card__hint">{tr("Загрузка друзей...", "Завантаження друзів...")}</div>}
@@ -194,7 +228,9 @@ export function FriendsPage() {
                 })}
               </div>
             ) : (
-              <div className="card__hint">{tr("Пока нет приглашенных пользователей.", "Поки немає запрошених користувачів.")}</div>
+              <div className="card__hint">
+                {tr("Пока нет приглашенных пользователей.", "Поки немає запрошених користувачів.")}
+              </div>
             )}
           </>
         ) : (
@@ -206,7 +242,10 @@ export function FriendsPage() {
       <ConfirmModal
         isOpen={Boolean(friendToDelete)}
         title={tr("Удалить друга?", "Видалити друга?")}
-        message={tr("Вы уверены, что хотите удалить пользователя из друзей?", "Ви впевнені, що хочете видалити користувача з друзів?")}
+        message={tr(
+          "Вы уверены, что хотите удалить пользователя из друзей?",
+          "Ви впевнені, що хочете видалити користувача з друзів?",
+        )}
         confirmLabel={isRemoving ? tr("Удаление...", "Видалення...") : tr("Да", "Так")}
         cancelLabel={tr("Нет", "Ні")}
         onConfirm={() => {

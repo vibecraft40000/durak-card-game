@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { getConfig } from "@/shared/api/config";
 import { getProfile, type UserProfile } from "@/shared/api/user";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { useTheme } from "@/shared/providers/ThemeProvider";
@@ -16,6 +17,8 @@ export function ProfilePage() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [profileError, setProfileError] = useState(false);
+  const [depositsEnabled, setDepositsEnabled] = useState(false);
+  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(false);
 
   const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
 
@@ -27,6 +30,15 @@ export function ProfilePage() {
         setBalance(response.balance);
       })
       .catch(() => setProfileError(true));
+    void getConfig()
+      .then((config) => {
+        setDepositsEnabled(config.depositsEnabled === true);
+        setWithdrawalsEnabled(config.withdrawalsEnabled === true);
+      })
+      .catch(() => {
+        setDepositsEnabled(false);
+        setWithdrawalsEnabled(false);
+      });
   }, []);
 
   const fullName =
@@ -34,6 +46,14 @@ export function ProfilePage() {
     (user?.username ? `@${user.username}` : [user?.first_name, user?.last_name].filter(Boolean).join(" ")) ||
     tr("Игрок", "Гравець");
   const avatarLetter = (user?.first_name || user?.username || "P").slice(0, 1).toUpperCase();
+  const actionButtonStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    textDecoration: "none",
+    color: "inherit",
+  } as const;
 
   return (
     <section className="screen profile-screen">
@@ -65,44 +85,64 @@ export function ProfilePage() {
           </div>
         </div>
         <div className="profile-balance__actions">
-          <Link
-            to="/profile/deposit"
-            className="button button--deposit"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              textDecoration: "none",
-              color: "inherit",
-            }}
-          >
-            <DepositIcon size={18} />
-            {tr("Ввод", "Внесення")}
-          </Link>
-          <Link
-            to="/profile/withdraw"
-            className="button button--withdraw"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              textDecoration: "none",
-              color: "inherit",
-            }}
-          >
-            <WithdrawIcon size={18} />
-            {tr("Вывод", "Виведення")}
-          </Link>
+          {depositsEnabled ? (
+            <Link
+              to="/profile/deposit"
+              className="button button--deposit"
+              style={actionButtonStyle}
+            >
+              <DepositIcon size={18} />
+              {tr("Ввод", "Внесення")}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className="button button--deposit"
+              disabled
+              title={tr("Пополнение временно недоступно в публичной бете", "Поповнення тимчасово недоступне в публічній beta")}
+              style={{ ...actionButtonStyle, opacity: 0.55, cursor: "not-allowed" }}
+            >
+              <DepositIcon size={18} />
+              {tr("Ввод скоро", "Внесення згодом")}
+            </button>
+          )}
+          {withdrawalsEnabled ? (
+            <Link to="/profile/withdraw" className="button button--withdraw" style={actionButtonStyle}>
+              <WithdrawIcon size={18} />
+              {tr("Вывод", "Виведення")}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className="button button--withdraw"
+              disabled
+              title={tr("Вывод временно недоступен в публичной бете", "Виведення тимчасово недоступне в публічній beta")}
+              style={{ ...actionButtonStyle, opacity: 0.55, cursor: "not-allowed" }}
+            >
+              <WithdrawIcon size={18} />
+              {tr("Вывод скоро", "Виведення згодом")}
+            </button>
+          )}
         </div>
       </AppCard>
 
       <div className="list">
-        <Link className="menu-item" to="/profile/deposit">
-          <span>{tr("Пополнение (Crypto Bot)", "Поповнення (Crypto Bot)")}</span>
-          <ChevronRightIcon size={16} />
-        </Link>
+        {depositsEnabled ? (
+          <Link className="menu-item" to="/profile/deposit">
+            <span>{tr("Пополнение (Crypto Bot)", "Поповнення (Crypto Bot)")}</span>
+            <ChevronRightIcon size={16} />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            className="menu-item"
+            disabled
+            title={tr("Пополнение временно недоступно в публичной бете", "Поповнення тимчасово недоступне в публічній beta")}
+            style={{ opacity: 0.55, cursor: "not-allowed", textAlign: "left" }}
+          >
+            <span>{tr("Пополнение скоро", "Поповнення згодом")}</span>
+          </button>
+        )}
         <Link className="menu-item" to="/profile/friends">
           <span>{tr("Друзья", "Друзі")}</span>
           <ChevronRightIcon size={16} />

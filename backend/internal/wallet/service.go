@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"durakonline/backend/internal/money"
 	"durakonline/backend/internal/transactions"
 	"durakonline/backend/pkg/metrics"
 	"github.com/jackc/pgx/v5"
@@ -42,14 +43,44 @@ func (s *Service) HoldBet(ctx context.Context, userID, matchID string, stake flo
 func (s *Service) RollbackHoldBet(ctx context.Context, userID, matchID string) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var heldNet float64
 	start := time.Now()
-	_, err := s.db.Exec(ctx, `
-DELETE FROM transactions
-WHERE user_id = $1 AND match_id = $2 AND type = 'bet_hold' AND status = 'confirmed'`,
+	err = tx.QueryRow(ctx, `
+SELECT COALESCE(SUM(amount), 0)
+FROM transactions
+WHERE user_id = $1
+  AND match_id = $2
+  AND status = 'confirmed'
+  AND type IN ('bet_hold', 'bet_hold_release')`,
 		userID, matchID,
+	).Scan(&heldNet)
+	metrics.ObserveDBQuery("tx_select_bet_hold_net", start)
+	if err != nil {
+		return err
+	}
+	if heldNet >= 0 {
+		return tx.Commit(ctx)
+	}
+
+	releaseAmount := money.Round2(-heldNet)
+	start = time.Now()
+	_, err = tx.Exec(ctx, `
+INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
+VALUES (gen_random_uuid(), $1, 'bet_hold_release', $2, 'confirmed', $3, NOW())
+ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`,
+		userID, releaseAmount, matchID,
 	)
-	metrics.ObserveDBQuery("tx_rollback_bet_hold", start)
-	return err
+	metrics.ObserveDBQuery("tx_insert_bet_hold_release", start)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) holdBetOnce(ctx context.Context, userID, matchID string, stake float64) error {
@@ -100,8 +131,9 @@ func (s *Service) SettleWin(ctx context.Context, winnerID, matchID string, pot f
 
 // SettleWinInTx performs wallet settlement within an existing transaction. Caller must commit/rollback.
 func (s *Service) SettleWinInTx(ctx context.Context, tx pgx.Tx, winnerID, matchID string, pot float64, commissionBps int) error {
-	commission := pot * float64(commissionBps) / 10000.0
-	winAmount := pot - commission
+	pot = money.Round2(pot)
+	commission := money.Round2(pot * float64(commissionBps) / 10000.0)
+	winAmount := money.Round2(pot - commission)
 	start := time.Now()
 	tag, err := tx.Exec(ctx, `
 INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
@@ -117,10 +149,10 @@ ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`, winnerID,
 	}
 	start = time.Now()
 	_, err = tx.Exec(ctx, `
-INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
-VALUES (gen_random_uuid(), $1, 'commission', $2, 'confirmed', $3, NOW())
-ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`, winnerID, -commission, matchID)
-	metrics.ObserveDBQuery("tx_settle_insert_commission", start)
+INSERT INTO platform_fees (id, match_id, gross_pot, commission_bps, commission_amount, created_at)
+VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW())
+ON CONFLICT (match_id) DO NOTHING`, matchID, pot, commissionBps, commission)
+	metrics.ObserveDBQuery("tx_settle_insert_platform_fee", start)
 	if err != nil {
 		return err
 	}
@@ -136,8 +168,9 @@ func (s *Service) settleOnce(ctx context.Context, winnerID, matchID string, pot 
 	}
 	defer tx.Rollback(ctx)
 
-	commission := pot * float64(commissionBps) / 10000.0
-	winAmount := pot - commission
+	pot = money.Round2(pot)
+	commission := money.Round2(pot * float64(commissionBps) / 10000.0)
+	winAmount := money.Round2(pot - commission)
 
 	start := time.Now()
 	tag, err := tx.Exec(ctx, `
@@ -156,10 +189,10 @@ ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`, winnerID,
 
 	start = time.Now()
 	_, err = tx.Exec(ctx, `
-INSERT INTO transactions (id, user_id, type, amount, status, match_id, created_at)
-VALUES (gen_random_uuid(), $1, 'commission', $2, 'confirmed', $3, NOW())
-ON CONFLICT ON CONSTRAINT ux_transactions_match_user_type DO NOTHING`, winnerID, -commission, matchID)
-	metrics.ObserveDBQuery("tx_settle_insert_commission", start)
+INSERT INTO platform_fees (id, match_id, gross_pot, commission_bps, commission_amount, created_at)
+VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW())
+ON CONFLICT (match_id) DO NOTHING`, matchID, pot, commissionBps, commission)
+	metrics.ObserveDBQuery("tx_settle_insert_platform_fee", start)
 	if err != nil {
 		metrics.IncSettlement("error")
 		return err

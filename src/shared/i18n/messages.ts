@@ -4,6 +4,11 @@ type TranslateParams = Record<string, string | number>;
 
 const RU_MESSAGES: Record<string, string> = {
   "app.loading": "Загрузка…",
+  "subscription.title": "Требуется подписка на канал",
+  "subscription.description": "Чтобы получить доступ к игре и новостям проекта, подпишитесь на наш канал. После подписки нажмите «Проверить подписку».",
+  "subscription.subscribe": "Подписаться на канал",
+  "subscription.afterSubscribe": "После подписки нажмите кнопку ниже.",
+  "subscription.check": "Проверить подписку",
 
   "common.cards": "карт",
   "common.share": "Поделиться",
@@ -117,7 +122,7 @@ const RU_MESSAGES: Record<string, string> = {
   "room.cancelledMessage": "Игра не состоялась. Создайте новую или выберите другую комнату.",
   "room.cancelledAction": "К списку игр",
   "room.conditions": "Условия",
-  "room.testModeHint": "Тестовый режим: игра без списаний и выплат.",
+  "room.testModeHint": "Ставка резервируется на сервере только после подтверждения всеми игроками.",
   "room.flowHint": "Сначала оба подтверждают, затем создатель стола нажимает «Начать».",
   "room.readyLabel": "Готовы: {ready}/{players}",
   "room.stakeLabel": "Подтверждение ставки: {confirmed}/{players}",
@@ -144,6 +149,11 @@ const RU_MESSAGES: Record<string, string> = {
 
 const UK_MESSAGES: Record<string, string> = {
   "app.loading": "Завантаження…",
+  "subscription.title": "Потрібна підписка на канал",
+  "subscription.description": "Щоб отримати доступ до гри та новин проєкту, підпишіться на наш канал. Після підписки натисніть «Перевірити підписку».",
+  "subscription.subscribe": "Підписатися на канал",
+  "subscription.afterSubscribe": "Після підписки натисніть кнопку нижче.",
+  "subscription.check": "Перевірити підписку",
 
   "common.cards": "карт",
   "common.share": "Поділитися",
@@ -257,7 +267,7 @@ const UK_MESSAGES: Record<string, string> = {
   "room.cancelledMessage": "Гра не відбулася. Створіть нову або виберіть іншу кімнату.",
   "room.cancelledAction": "До списку ігор",
   "room.conditions": "Умови",
-  "room.testModeHint": "Тестовий режим: гра без списань і виплат.",
+  "room.testModeHint": "Ставка резервується на сервері лише після підтвердження всіма гравцями.",
   "room.flowHint": "Спочатку обидва підтверджують, потім творець столу натискає «Почати».",
   "room.readyLabel": "Готові: {ready}/{players}",
   "room.stakeLabel": "Підтвердження ставки: {confirmed}/{players}",

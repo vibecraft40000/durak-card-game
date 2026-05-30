@@ -1,13 +1,21 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { initTelegramWebApp, getTelegramStartParam } from "@/shared/lib/telegram";
-import { ensureAuthSession } from "@/shared/api/auth";
+import { SubscriptionRequiredError } from "@/shared/api/auth";
+import { ensureAuthSessionLazy } from "@/shared/api/auth.lazy";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
-import { AppRoutes } from "@/app/routes";
+import { SubscriptionGate } from "@/shared/ui/SubscriptionGate";
+
+const AppRoutes = lazy(async () => {
+  const module = await import("@/app/routes");
+  return { default: module.AppRoutes };
+});
 
 export function App() {
   const [authReady, setAuthReady] = useState(false);
   const [devAuth, setDevAuth] = useState(false);
+  const [subscriptionRequired, setSubscriptionRequired] = useState<{ channelLink: string } | null>(null);
+  const [isRetryingSubscription, setIsRetryingSubscription] = useState(false);
   const navigate = useNavigate();
   const { syncLanguageFromProfile, t } = useLanguage();
 
@@ -20,12 +28,18 @@ export function App() {
       setAuthReady(true);
     }, 12000);
 
-    ensureAuthSession(controller.signal)
+    ensureAuthSessionLazy(controller.signal)
       .then(() => {
         setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
         setAuthReady(true);
+        setSubscriptionRequired(null);
       })
       .catch((err) => {
+        if (err instanceof SubscriptionRequiredError) {
+          setSubscriptionRequired({ channelLink: err.channelLink });
+          setAuthReady(true);
+          return;
+        }
         console.warn("[App] ensureAuthSession failed", err);
         setDevAuth(localStorage.getItem("durak_dev_auth") === "true");
         setAuthReady(true);
@@ -39,6 +53,24 @@ export function App() {
       controller.abort();
     };
   }, []);
+
+  const retrySubscriptionCheck = useCallback(async () => {
+    if (isRetryingSubscription) return;
+    setIsRetryingSubscription(true);
+    try {
+      const auth = await import("@/shared/api/auth");
+      auth.clearTokens();
+      await auth.bootstrapTelegramAuth();
+      setSubscriptionRequired(null);
+      setAuthReady(true);
+    } catch (err) {
+      if (err instanceof SubscriptionRequiredError) {
+        setSubscriptionRequired({ channelLink: err.channelLink });
+      }
+    } finally {
+      setIsRetryingSubscription(false);
+    }
+  }, [isRetryingSubscription]);
 
   useEffect(() => {
     const startParam = getTelegramStartParam();
@@ -55,26 +87,40 @@ export function App() {
     void syncLanguageFromProfile();
   }, [authReady, syncLanguageFromProfile]);
 
+  const loadingScreen = (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100dvh",
+        color: "var(--color-text-secondary, #8d8d93)",
+        background: "var(--color-bg-primary, #010a1b)",
+      }}
+    >
+      {t("app.loading")}
+    </div>
+  );
+
   if (!authReady) {
+    return loadingScreen;
+  }
+
+  if (subscriptionRequired) {
     return (
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          minHeight: "100dvh",
-          color: "var(--color-text-secondary, #8d8d93)",
-          background: "var(--color-bg-primary, #010a1b)",
-        }}
-      >
-        {t("app.loading")}
-      </div>
+      <SubscriptionGate
+        channelLink={subscriptionRequired.channelLink}
+        onRetry={retrySubscriptionCheck}
+        isRetrying={isRetryingSubscription}
+      />
     );
   }
 
   return (
     <>
-      <AppRoutes />
+      <Suspense fallback={loadingScreen}>
+        <AppRoutes />
+      </Suspense>
       {devAuth && (
         <div
           style={{

@@ -94,7 +94,7 @@ async def cmd_admin(message: Message, state: FSMContext) -> None:
 
     # 3) Доступ есть — показываем панель (с защитой от ошибок)
     try:
-        count = len(get_subscriber_chat_ids())
+        count = len(await get_subscriber_chat_ids())
     except Exception as e:
         logger.exception("get_subscriber_chat_ids: %s", e)
         count = 0
@@ -250,7 +250,7 @@ async def admin_users(cb: CallbackQuery, bot: Bot) -> None:
 async def admin_back(cb: CallbackQuery, state: FSMContext) -> None:
     """Вернуться в главное меню админки."""
     await state.clear()
-    count = len(get_subscriber_chat_ids())
+    count = len(await get_subscriber_chat_ids())
     text = (
         "<b>Панель администратора</b>\n\n"
         f"Подписчиков (чат-ов с /start): <b>{count}</b>\n\n"
@@ -270,7 +270,7 @@ async def admin_back(cb: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "admin:stats")
 @admin_only
 async def admin_stats(cb: CallbackQuery, bot: Bot) -> None:
-    count = len(get_subscriber_chat_ids())
+    count = len(await get_subscriber_chat_ids())
     text = f"<b>Статистика</b>\n\nПодписчиков: <b>{count}</b>"
     if API_BASE_URL and ADMIN_SECRET:
         try:
@@ -325,7 +325,7 @@ async def broadcast_got_text(message: Message, state: FSMContext) -> None:
         return
     await state.update_data(broadcast_text=text)
     await state.set_state(BroadcastStates.confirm)
-    count = len(get_subscriber_chat_ids())
+    count = len(await get_subscriber_chat_ids())
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Отправить", callback_data="admin:send_broadcast")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin:close")],
@@ -342,7 +342,7 @@ async def broadcast_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot) -> N
     data = await state.get_data()
     text = data.get("broadcast_text") or ""
     await state.clear()
-    chat_ids = get_subscriber_chat_ids()
+    chat_ids = await get_subscriber_chat_ids()
     ok, fail = 0, 0
     for cid in chat_ids:
         try:
@@ -360,4 +360,4 @@ async def register_subscriber_from_message(message: Message) -> None:
     if not message.from_user:
         return
     chat_id = message.chat.id if message.chat else message.from_user.id
-    add_subscriber(chat_id, message.from_user.id, message.from_user.username)
+    await add_subscriber(chat_id, message.from_user.id, message.from_user.username)

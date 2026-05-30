@@ -1,6 +1,5 @@
-# Caddy - auto HTTPS for durakonline.duckdns.org
-
-durakonline.duckdns.org, www.durakonline.duckdns.org {
+# Caddy - auto HTTPS
+your-domain.example, www.your-domain.example {
     root * /srv
     handle /api/* {
         reverse_proxy api:8080

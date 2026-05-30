@@ -1,160 +1,67 @@
-# Deploy: Git + Docker + Caddy (durakonline.duckdns.org)
+# Deploy: Git + Docker + Caddy
 
-## Архитектура
+> Canonical deployment path: `scripts/deploy_duckdns.py` + `docker/docker-compose.caddy.yml`
+
+## Architecture
 
 ```
-ПК (git push) → GitHub → VPS (deploy_duckdns.py или git pull + docker compose)
+PC (git push) → GitHub → VPS (deploy script or git pull + docker compose)
                          ↓
                     Caddy (auto HTTPS)
 ```
 
----
+## 1. Domain and DNS
 
-## Автообновление
+Set up a domain (e.g., via DuckDNS) pointing to your server IP.
 
-**Нет.** При `git push` на GitHub файлы **не обновляются** на VPS автоматически. Нужно вручную:
-- запустить `python scripts/deploy_duckdns.py`, или
-- по SSH: `git pull` + `docker compose ... up -d --build`
-
-Чтобы сделать автодеплой, можно настроить **GitHub Actions**: workflow на каждый push будет по SSH подключаться к VPS и выполнять deploy.
-
----
-
-## Что было сделано (чеклист)
-
-| Действие | Статус |
-|----------|--------|
-| Git init, commit, push в GitHub | ✅ |
-| Репозиторий: github.com/martaliman671-cpu/durakonline | ✅ |
-| Caddyfile (SSL для durakonline.duckdns.org) | ✅ |
-| docker-compose.caddy.yml (postgres, redis, migrate, api, caddy) | ✅ |
-| deploy_duckdns.py (загрузка на VPS через SSH) | ✅ |
-| Установка Docker на VPS | ✅ |
-| **Docker login на VPS** (обход rate limit) | ✅ `docker login` в SSH |
-| **Swap 2GB на VPS** (Go build падал по OOM) | ✅ fallocate + mkswap + swapon |
-| **Остановка nginx** (освобождение 80/443) | ✅ systemctl stop nginx |
-| Первый запуск compose | ✅ |
-| HTTPS: durakonline.duckdns.org | ✅ 200 OK |
-
----
-
-## 1. DuckDNS
-
-- [duckdns.org](https://www.duckdns.org) → IP: **72.56.74.7** (VPS Timeweb)
-- Убедись, что durakonline.duckdns.org указывает на этот IP
-
-## 2. GitHub
-
-**На ПК:**
-
-```powershell
-cd "c:\Users\GANG\Desktop\cursor project\durakonline"
-
-# Сборка фронта (в docker/frontend-dist)
-npm run build
-New-Item -ItemType Directory -Force -Path docker\frontend-dist
-Copy-Item dist\* docker\frontend-dist -Recurse
-
-git add .
-git commit -m "update"
-git push
-```
-
-## 3. Первый запуск на VPS (если с нуля)
-
-```powershell
-ssh root@72.56.74.7
-```
-
-На сервере:
+## 2. First run on VPS
 
 ```bash
-# Docker + Git
+# Install Docker + Git
 apt update && apt install -y docker.io docker-compose-v2 git
-git clone https://github.com/martaliman671-cpu/durakonline.git /root/durakonline
+git clone https://github.com/YOUR_USER/durak-card-game.git /root/durakonline
 cd /root/durakonline
 
-# Docker Hub (обязательно, иначе rate limit)
-docker login
-
-# Swap 2GB (если VPS ~1GB RAM — иначе go build упадёт по OOM)
-fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
-grep -q swapfile /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
-
-# Если nginx занимает 80/443 — остановить
-systemctl stop nginx
-systemctl disable nginx
-
-# .env с токенами (обязательно!)
+# .env with tokens (required!)
 nano .env
-# VITE_API_BASE_URL=https://durakonline.duckdns.org
-# VITE_WS_URL=wss://durakonline.duckdns.org/ws
+# VITE_API_BASE_URL=https://your-domain.example
+# VITE_WS_URL=wss://your-domain.example/ws
 # TELEGRAM_BOT_TOKEN=...
-# JWT_SECRET=...   # секрет для JWT, нужен для авторизации
-# VITE_FORCE_DEV_AUTH=false   # обязательно для продакшена (реальный initData из Mini App)
-# ALLOW_DEV_TELEGRAM_AUTH=true  # если initData пустой (Menu Button, некоторые клиенты)
-# CRYPTO_PAY_API_TOKEN=...    # для пополнения через Crypto Bot
+# JWT_SECRET=...
 
-# Порты
+# Ports
 ufw allow 80 && ufw allow 443 && ufw reload
 
-# Запуск (--force-recreate api — чтобы подхватить изменения .env)
-docker compose -f docker/docker-compose.caddy.yml up -d --build --force-recreate api
+# Start
+docker compose -f docker/docker-compose.caddy.yml up -d --build
 ```
 
-## 4. Обновление (деплой)
+## 3. Update (deploy)
 
-**Скрипт (рекомендуется):**
+**Script (recommended):**
 
 ```powershell
-cd "c:\Users\GANG\Desktop\cursor project\durakonline"
-$env:DEPLOY_PW = "пароль_root"
+$env:DEPLOY_PW = "your_root_password"
 python scripts/deploy_duckdns.py
 ```
 
-Скрипт: собирает фронт, загружает файлы по SCP, выполняет `docker compose up -d --build` на VPS.
-
-**Вручную:**
+**Manually:**
 
 ```powershell
-# 1. Сборка фронта
 npm run build
 Copy-Item dist\* docker\frontend-dist -Recurse
-
-# 2. Git
-git add .
-git commit -m "update"
-git push
-
-# 3. На VPS
-ssh root@72.56.74.7 "cd /root/durakonline && git pull && docker compose -f docker/docker-compose.caddy.yml up -d --build"
+git add . && git commit -m "update" && git push
+ssh root@YOUR_SERVER_IP "cd /root/durakonline && git pull && docker compose -f docker/docker-compose.caddy.yml up -d --build"
 ```
 
-## 5. BotFather
+## 4. BotFather
 
-Menu Button → `https://durakonline.duckdns.org`
+Menu Button → `https://your-domain.example`
 
-## 6. CryptoBot (Crypto Pay) — пополнение баланса
-
-1. Открой [@CryptoBot](https://t.me/CryptoBot?start=pay) → Crypto Pay → Create App
-2. Получи API Token и добавь в `.env`:
-   ```
-   CRYPTO_PAY_API_TOKEN=12345:ABC...
-   ```
-3. Webhooks → Enable → URL: `https://durakonline.duckdns.org/webhooks/cryptopay`
-4. Перезапусти API (`docker compose up -d api --force-recreate`)
-
----
-
-## Полезные команды
+## Useful commands
 
 ```bash
-# Логи API
 docker logs -f docker-api-1
-
-# Статус контейнеров
 docker ps
-
-# Рестарт Caddy
 docker restart docker-caddy-1
 ```

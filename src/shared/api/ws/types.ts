@@ -1,4 +1,4 @@
-import type { Card } from "@/entities/card/types";
+import type { Card, Rank } from "@/entities/card/types";
 import type { MatchActionType } from "@/entities/match/types";
 import type { Player } from "@/entities/player/types";
 
@@ -7,20 +7,13 @@ export type IntentType =
   | "playAttack"
   | "playDefend"
   | "throwIn"
+  | "shulerPlay"
   | "translate"
   | "take"
   | "pass"
   | "endTurn"
   | "confirmStake"
   | "shulerReport";
-
-// Envelope for client intents
-export interface ClientIntent {
-  type: IntentType;
-  actionId: string;
-  expectedVersion: number;
-  payload?: unknown;
-}
 
 // Seat (player position) at the table
 export interface Seat {
@@ -30,6 +23,24 @@ export interface Seat {
   isReady: boolean;
   isConfirmed: boolean;
   avatarUrl?: string;
+}
+
+export interface MatchAffordances {
+  canAct: boolean;
+  canAttack: boolean;
+  canDefend: boolean;
+  canTake: boolean;
+  canPass: boolean;
+  canThrowIn: boolean;
+  canTranslate: boolean;
+  canShulerPlay: boolean;
+  canShulerReport: boolean;
+  attackCardIds?: string[];
+  defendCardIds?: string[];
+  throwInCardIds?: string[];
+  translateCardIds?: string[];
+  shulerPlayCardIds?: string[];
+  defendableTargetCardIds?: string[];
 }
 
 // Extended match state payload from backend
@@ -46,12 +57,14 @@ export interface MatchStatePayload {
   mode?: "podkidnoy" | "perevodnoy";
   stakeUsd?: number;
   trumpSuit: string;
+  attackerPlayerId?: string;
+  defenderPlayerId?: string;
 
   // Deck / table state
   stockCount?: number;
   discardCount?: number;
   capacityOnTable?: number;
-  allowedRanks?: string[];
+  allowedRanks?: Rank[];
   /** Absolute timestamp (ms since epoch) when current turn ends */
   turnEndsAt?: number;
   /** Seat index of player whose turn it is (attacker/defender/thrower depending on phase) */
@@ -77,19 +90,23 @@ export interface MatchStatePayload {
   // Shuler ability / report window
   shuler?: {
     isWindowOpen: boolean;
+    windowEndsAt?: number;
     activePlayers: string[];
   };
+  affordances?: MatchAffordances;
 
   // Finish / payouts
   finish?: {
     bank: number;
     commission: number;
+    /** Net profit/loss per player after stake and commission; not gross wallet credits. */
     payouts: Record<string, number>;
     places: string[];
   };
 
   // Legacy / transitional fields kept for backward compatibility with older client code
   roomId?: string;
+  matchId?: string;
   status?: string;
   turnPlayerId?: string;
   tableCards?: Card[];
@@ -97,10 +114,17 @@ export interface MatchStatePayload {
   winnerPlayerId?: string;
 }
 
+type SyncRequestPayload = {
+  roomId: string;
+  lastKnownVersion?: number;
+  lastKnownMatchId?: string;
+  supportsStateDiff?: boolean;
+};
+
 export type ClientWsEvent =
   | {
       type: "join_room";
-      payload: { roomId: string };
+      payload: SyncRequestPayload;
     }
   | {
       type: "create_room";
@@ -114,10 +138,12 @@ export type ClientWsEvent =
           | MatchActionType
           | "attack_card"
           | "defend_card"
+          | "throw_card"
           | "translate"
           | "take_cards"
           | "pass_turn"
           | "end_round"
+          | "shuler_play"
           | "shuler_report";
         cardId?: string;
         expectedVersion?: number;
@@ -146,53 +172,80 @@ export type ClientWsEvent =
     }
   | {
       type: "reconnect";
-      payload: { roomId: string };
+      payload: SyncRequestPayload;
     }
   | {
       type: "sync_request";
-      payload: { roomId: string };
-    }
-  | {
-      type: "intent";
-      payload: ClientIntent;
+      payload: SyncRequestPayload;
     };
 
-export type ServerWsEvent =
-  | { type: "room_update"; payload: Record<string, unknown> }
-  | {
-      type: "move_applied";
-      payload: {
-        roomId: string;
-        matchId: string;
-        eventId?: string;
-        playerId: string;
-        action: string;
-        cardId?: string;
+type ServerWsEventMeta = {
+  correlationId?: string;
+  locale?: string;
+};
+
+export type ServerWsEvent = ServerWsEventMeta &
+  (
+    | { type: "room_update"; payload: Record<string, unknown> }
+    | {
+        type: "state_sync";
+        payload: {
+          roomId: string;
+          matchId: string;
+        fromVersion: number;
+        toVersion: number;
+        mode: "replay" | "snapshot" | "noop";
+        replayCount: number;
+        replayFromVersion?: number;
       };
     }
-  | { type: "game_state"; payload: MatchStatePayload }
-  | { type: "timer_update"; payload: { roomId: string; turnPlayerId: string; turnEndsAt: number } }
-  | {
-      type: "match_finished";
-      payload: {
-        roomId: string;
-        winnerPlayerId?: string;
-        winnerPlayerIds?: string[];
-        isDraw?: boolean;
-        finishGroups?: string[][];
-        abandoned?: boolean;
-        settlementId?: string;
-        payouts?: { userId: string; amount: number }[];
-        commission?: number;
-        pot?: number;
-        newBalances?: Record<string, number>;
-      };
-    }
-  | { type: "player_disconnected"; payload: { roomId: string; playerId: string } }
-  | { type: "player_reconnected"; payload: { roomId: string; playerId: string } }
-  | { type: "chat_message"; payload: { userId: string; message: string } }
-  | { type: "error"; payload: { message: string; errorCode?: string } }
-  | {
-      type: "version_mismatch";
-      payload: { roomId: string; action: string; cardId?: string; actionId?: string };
-    };
+    | {
+        type: "move_applied";
+        payload: {
+          roomId: string;
+          matchId: string;
+          eventId?: string;
+          playerId: string;
+          action: string;
+          cardId?: string;
+        };
+      }
+    | {
+        type: "state_diff";
+        payload: {
+          roomId: string;
+          matchId: string;
+          fromVersion: number;
+          toVersion: number;
+          patch: Partial<MatchStatePayload>;
+        };
+      }
+    | { type: "game_state"; payload: MatchStatePayload }
+    | { type: "timer_update"; payload: { roomId: string; turnPlayerId: string; turnEndsAt: number } }
+    | {
+        type: "match_finished";
+        payload: {
+          roomId: string;
+          winnerPlayerId?: string;
+          winnerPlayerIds?: string[];
+          isDraw?: boolean;
+          finishGroups?: string[][];
+          abandoned?: boolean;
+          settlementId?: string;
+          /** Net profit/loss per player after stake and commission; not gross wallet credits. */
+          payouts?: { userId: string; amount: number }[];
+          commission?: number;
+          pot?: number;
+          newBalances?: Record<string, number>;
+        };
+      }
+    | { type: "player_disconnected"; payload: { roomId: string; playerId: string } }
+    | { type: "player_reconnected"; payload: { roomId: string; playerId: string } }
+    | { type: "player_afk_bot_takeover"; payload: { roomId: string; playerId: string } }
+    | { type: "chat_message"; payload: { userId: string; message: string } }
+    | { type: "error"; payload: { message: string; errorCode?: string } }
+    | {
+        type: "version_mismatch";
+        payload: { roomId: string; action: string; cardId?: string; actionId?: string };
+      }
+  );

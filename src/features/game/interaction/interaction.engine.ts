@@ -15,7 +15,7 @@ import { detectZone, type TableRect } from "./zones";
 import { isValidMove } from "./validation";
 
 export type DropResult =
-  | { outcome: "accept"; action: "attack" | "defend"; cardId: string }
+  | { outcome: "accept"; action: "attack" | "defend" | "throw" | "shuler_play"; cardId: string }
   | { outcome: "reject"; cardId: string }
   | { outcome: "reject_silent" };
 

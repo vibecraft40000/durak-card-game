@@ -17,10 +17,11 @@ env:
   COMMISSION_BPS: "300"
 
 secrets:
-  postgresUrl: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
-  redisUrl: "redis://redis:6379/0"
-  jwtSecret: "dev-secret"
-  telegramBotToken: "dev-bot-token"
+  # Supply real values via env-specific values files or --set/secret management.
+  postgresUrl: ""
+  redisUrl: ""
+  jwtSecret: ""
+  telegramBotToken: ""
 
 resources:
   requests:

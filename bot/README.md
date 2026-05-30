@@ -50,7 +50,7 @@ run.bat
 ```bash
 cd bot
 pip install -r requirements.txt
-BOT_TOKEN=your-token WEBAPP_URL=https://durakonline.duckdns.org python main.py
+BOT_TOKEN=your-token WEBAPP_URL=https://your-domain.example python main.py
 ```
 
 Токен можно задать в `.env` в корне проекта или в `bot/.env`.

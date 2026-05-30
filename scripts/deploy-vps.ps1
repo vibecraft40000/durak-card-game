@@ -1,9 +1,9 @@
 # Deploy Durak Online to VPS
-# Usage: .\scripts\deploy-vps.ps1 [-VpsHost 72.56.74.7] [-RemotePath /root/durakonline]
+# Usage: .\scripts\deploy-vps.ps1 [-VpsHost YOUR_SERVER_IP] [-RemotePath /root/durakonline]
 # Requires: SSH key for root@VPS, or run remote block manually after upload.
 
 param(
-    [string]$VpsHost = "72.56.74.7",
+    [string]$VpsHost = "YOUR_SERVER_IP",
     [string]$RemotePath = "/root/durakonline",
     [string]$SshUser = "root",
     [switch]$SkipBuild,

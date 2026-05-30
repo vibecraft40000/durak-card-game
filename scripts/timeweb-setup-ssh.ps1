@@ -1,4 +1,4 @@
-# Timeweb Cloud: SSH key setup for root@72.56.74.7
+# Timeweb Cloud: SSH key setup for root@YOUR_SERVER_IP
 
 $ErrorActionPreference = "Stop"
 $keyPath = "$env:USERPROFILE\.ssh\id_ed25519"

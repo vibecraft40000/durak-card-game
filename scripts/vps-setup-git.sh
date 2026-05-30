@@ -1,6 +1,6 @@
 #!/bin/sh
 # VPS setup: Docker + Git clone + first run
-# Usage: ssh root@72.56.74.7 'curl -sL https://raw.../vps-setup-git.sh | sh'
+# Usage: ssh root@YOUR_SERVER_IP 'curl -sL https://raw.../vps-setup-git.sh | sh'
 # Or: scp scripts/vps-setup-git.sh root@IP:/tmp/ && ssh root@IP 'sh /tmp/vps-setup-git.sh'
 
 set -e
@@ -35,7 +35,6 @@ echo "4. Creating .env (edit with your tokens)..."
 if [ ! -f .env ]; then
     cat > .env << 'EOF'
 TELEGRAM_BOT_TOKEN=your_token
-BOT_TOKEN=your_token
 JWT_SECRET=change-me-in-production
 EOF
     echo "   Edit /root/durakonline/.env with your tokens!"
@@ -46,5 +45,5 @@ docker compose -f docker/docker-compose.caddy.yml up -d --build
 
 echo ""
 echo "=== Done ==="
-echo "App: https://durakonline.duckdns.org"
+echo "App: https://your-domain.example"
 echo "Set DuckDNS IP to this server. Edit .env with tokens."

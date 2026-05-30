@@ -13,15 +13,17 @@ import (
 type Client struct {
 	UserID string
 	RoomID string
+	Locale string
 	Conn   *websocket.Conn
 	send   chan []byte
 	closed atomic.Bool
 }
 
-func NewClient(userID, roomID string, conn *websocket.Conn, bufferSize int) *Client {
+func NewClient(userID, roomID, locale string, conn *websocket.Conn, bufferSize int) *Client {
 	return &Client{
 		UserID: userID,
 		RoomID: roomID,
+		Locale: locale,
 		Conn:   conn,
 		send:   make(chan []byte, bufferSize),
 	}

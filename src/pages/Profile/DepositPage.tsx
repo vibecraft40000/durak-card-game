@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { getConfig } from "@/shared/api/config";
 import { createDepositInvoice } from "@/shared/api/deposit";
-import { bootstrapTelegramAuth, clearTokens } from "@/shared/api/auth";
+import { resetAndBootstrapTelegramAuth } from "@/shared/api/auth.lazy";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { openTelegramLink } from "@/shared/lib/telegram";
 import { BackIcon, CryptoBotIcon } from "@/shared/ui/Icons";
@@ -15,7 +16,28 @@ export function DepositPage() {
 
   const [amount, setAmount] = useState<number>(10);
   const [loading, setLoading] = useState(false);
+  const [depositsEnabled, setDepositsEnabled] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getConfig()
+      .then((config) => {
+        if (!active) {
+          return;
+        }
+        setDepositsEnabled(config.depositsEnabled === true);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setDepositsEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function createCryptoPayment() {
     const { invoiceUrl } = await createDepositInvoice(amount);
@@ -24,7 +46,7 @@ export function DepositPage() {
   }
 
   async function handleContinue() {
-    if (loading) {
+    if (loading || depositsEnabled !== true) {
       return;
     }
     setLoading(true);
@@ -36,14 +58,16 @@ export function DepositPage() {
     } catch (firstErr: unknown) {
       const status = (firstErr as { status?: number })?.status;
       if (status === 401) {
-        clearTokens();
         try {
-          await bootstrapTelegramAuth();
+          await resetAndBootstrapTelegramAuth();
           await createCryptoPayment();
           return;
         } catch {
           // fall through and show message below
         }
+      }
+      if (status === 403) {
+        setDepositsEnabled(false);
       }
       const message = firstErr instanceof Error ? firstErr.message : String(firstErr ?? "");
       setError(message || tr("Не удалось создать платеж. Проверьте подключение и попробуйте снова.", "Не вдалося створити платіж. Перевірте з'єднання і спробуйте знову."));
@@ -51,6 +75,9 @@ export function DepositPage() {
       setLoading(false);
     }
   }
+
+  const showDisabledState = depositsEnabled === false;
+  const showLoadingState = depositsEnabled === null;
 
   return (
     <section className="screen deposit-page">
@@ -73,32 +100,52 @@ export function DepositPage() {
           </div>
         </button>
 
-        <p className="deposit-hint">
-          {tr("Пополнение выполняется через @CryptoBot в USD.", "Поповнення виконується через @CryptoBot у USD.")}
-        </p>
+        {showLoadingState ? (
+          <p className="deposit-hint">
+            {tr("Проверяем доступность пополнения...", "Перевіряємо доступність поповнення...")}
+          </p>
+        ) : showDisabledState ? (
+          <>
+            <p className="deposit-hint">
+              {tr(
+                "Пополнение временно отключено для публичной беты. Игровой контур доступен, а платежный путь включается отдельно оператором.",
+                "Поповнення тимчасово вимкнене для публічної бети. Ігровий контур доступний, а платіжний шлях вмикається окремо оператором."
+              )}
+            </p>
+            <p className="deposit-min">
+              {tr("Когда пополнение снова включат, кнопка продолжения появится здесь.", "Коли поповнення знову увімкнуть, кнопка продовження з'явиться тут.")}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="deposit-hint">
+              {tr("Пополнение выполняется через @CryptoBot в USD.", "Поповнення виконується через @CryptoBot у USD.")}
+            </p>
 
-        <p className="deposit-hint">{tr("Сумма пополнения (USD)", "Сума поповнення (USD)")}</p>
+            <p className="deposit-hint">{tr("Сумма пополнения (USD)", "Сума поповнення (USD)")}</p>
 
-        <div className="deposit-amounts">
-          {AMOUNTS.map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`deposit-amount ${amount === value ? "deposit-amount--active" : ""}`}
-              onClick={() => setAmount(value)}
-            >
-              ${value}
+            <div className="deposit-amounts">
+              {AMOUNTS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`deposit-amount ${amount === value ? "deposit-amount--active" : ""}`}
+                  onClick={() => setAmount(value)}
+                >
+                  ${value}
+                </button>
+              ))}
+            </div>
+
+            <p className="deposit-min">{tr("Минимум: 1 USD", "Мінімум: 1 USD")}</p>
+
+            {error && <p className="deposit-error">{error}</p>}
+
+            <button type="button" className="deposit-continue" onClick={handleContinue} disabled={loading}>
+              {loading ? tr("Создаем...", "Створюємо...") : tr("Продолжить", "Продовжити")}
             </button>
-          ))}
-        </div>
-
-        <p className="deposit-min">{tr("Минимум: 1 USD", "Мінімум: 1 USD")}</p>
-
-        {error && <p className="deposit-error">{error}</p>}
-
-        <button type="button" className="deposit-continue" onClick={handleContinue} disabled={loading}>
-          {loading ? tr("Создаем...", "Створюємо...") : tr("Продолжить", "Продовжити")}
-        </button>
+          </>
+        )}
       </div>
 
       <style>{`

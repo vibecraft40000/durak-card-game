@@ -1,0 +1,13 @@
+Original prompt: РёСЃРїСЂР°РІРёС‚СЊ СЂР°СЃСЃРёРЅС…СЂРѕРЅ РјРµР¶РґСѓ РєР»РёРµРЅС‚РѕРј Рё СЃРµСЂРІРµСЂРѕРј РґР»СЏ 52-card deck РІ Telegram Mini App Durak, РјРёРЅРёРјР°Р»СЊРЅРѕ Рё Р±РµР·РѕРїР°СЃРЅРѕ, СЃ РїСЂРѕРІРµСЂРєР°РјРё РїРѕСЃР»Рµ РєР°Р¶РґРѕРіРѕ С€Р°РіР°.
+
+- 2026-03-07: РќР°Р№РґРµРЅС‹ РєР»СЋС‡РµРІС‹Рµ mismatch-С‚РѕС‡РєРё РЅР° frontend: `src/entities/card/types.ts` РѕРіСЂР°РЅРёС‡РёРІР°РµС‚ СЂР°РЅРіРё С‚РѕР»СЊРєРѕ `6..A`, Р° `src/entities/game/lib/canPlayCard.ts` СЃСЂР°РІРЅРёРІР°РµС‚ СЂР°РЅРіРё Р±РµР· `2/3/4/5`.
+- 2026-03-07: Backend РїРѕРґС‚РІРµСЂР¶РґРµРЅ РєР°Рє source of truth: `backend/internal/games/engine/state.go` РёСЃРїРѕР»СЊР·СѓРµС‚ РїРѕСЂСЏРґРѕРє СЂР°РЅРіРѕРІ `2..A`, `backend/internal/games/engine/rules.go` СЃСЂР°РІРЅРёРІР°РµС‚ РІРµСЃР° РЅР°С‡РёРЅР°СЏ СЃ `2`.
+- 2026-03-07: РЇРІРЅРѕРіРѕ frontend test runner РІ РїСЂРѕРµРєС‚Рµ РЅРµ РЅР°Р№РґРµРЅРѕ; РїСЂРѕРІРµСЂРєР° Р±СѓРґРµС‚ РёРґС‚Рё С‡РµСЂРµР· СЃР±РѕСЂРєСѓ, С‚РѕС‡РµС‡РЅС‹Рµ РїСЂРѕРІРµСЂРєРё interaction/UI Рё РёС‚РѕРіРѕРІС‹Р№ `go test ./...`.
+- 2026-03-07: Added backend viewer-specific affordances contract in engine/ws DTO. Server now emits action booleans plus action-scoped card ids and defendable target ids for the current viewer.
+- 2026-03-07: Verified backend step with `go test ./internal/games/engine -run TestViewAffordances -count=1` and `go test ./internal/integration -run TestWSGameStateIncludesViewerAffordances -count=1`.
+- 2026-03-07: Frontend 52-card fix: expanded client `Rank` to `2..A`, aligned local rank comparison with backend order, reused shared face-rank constants in card rendering, and made local validation honor `tablePiles[].defense` alias.
+- 2026-03-07: Verified frontend with `npm run build` (passed).
+- 2026-03-07: Verified browser behavior on local Vite + mock API by injecting a 52-deck hand/state with ranks `2/3/4/5`; UI rendered the cards correctly, no console errors appeared, and pure frontend checks for `canPlayCard`/`validateCardDrop` passed for defend/attack/throw/drop scenarios.
+- 2026-03-07: Frontend now prefers server `affordances` for `canAttack/canDefend/canTake/canPass/canThrowIn/canShulerPlay`, card drag validation, and card-action button enablement. Legacy local rule inference remains as fallback when `affordances` are absent.
+- 2026-03-07: Final verification: `npm run build`, `go test ./...`, and `go test ./... -cover` all passed. Playwright smoke was not executed because the local `playwright` package is missing and was not installed into the repo as part of this task.
+- 2026-03-07: `go test -race ./...` is not available locally because cgo is disabled. Fallback docker race scenario passed via `docker compose -f docker/docker-compose.yml run --rm test go test -race ./...`.

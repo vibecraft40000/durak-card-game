@@ -17,8 +17,10 @@ export function formatActivityItem(
   const move = item as ActivityMoveItem;
   const name = getPlayerName(players, move.playerId);
   const actionLabels: Record<string, string> = {
-    attack: trRuntime("подкинул", "підкинув"),
+    attack: trRuntime("атаковал", "атакував"),
+    throw: trRuntime("подкинул", "підкинув"),
     defend: trRuntime("побил", "побив"),
+    shuler_play: trRuntime("сыграл как шулер", "зіграв як шулер"),
     take: trRuntime("взял", "взяв"),
     pass: trRuntime("пас", "пас"),
   };

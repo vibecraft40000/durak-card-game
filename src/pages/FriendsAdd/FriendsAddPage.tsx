@@ -1,6 +1,7 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { acceptFriendRequest, getFriendRequests, sendFriendRequest, type FriendEntry } from "@/shared/api/friends";
+import { HttpError } from "@/shared/api/http";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon } from "@/shared/ui/Icons";
 
@@ -52,8 +53,8 @@ export function FriendsAddPage() {
       await sendFriendRequest(trimmed);
       setSuccess(tr("Запрос отправлен.", "Запит надіслано."));
       setFriendId("");
-    } catch {
-      setError(tr("Не удалось отправить запрос в друзья.", "Не вдалося надіслати запит у друзі."));
+    } catch (err) {
+      setError(formatFriendRequestError(err, tr));
     } finally {
       setIsSubmitting(false);
     }
@@ -120,4 +121,33 @@ export function FriendsAddPage() {
       </div>
     </section>
   );
+}
+
+function formatFriendRequestError(
+  err: unknown,
+  tr: (ru: string, uk: string) => string,
+) {
+  if (err instanceof HttpError) {
+    const message = String(err.responseBody ?? err.message ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (message.includes("cannot add yourself")) {
+      return tr("Нельзя добавить себя в друзья.", "Не можна додати себе в друзі.");
+    }
+    if (message.includes("user not found")) {
+      return tr("Пользователь не найден.", "Користувача не знайдено.");
+    }
+    if (message.includes("already friends")) {
+      return tr("Этот пользователь уже у вас в друзьях.", "Цей користувач уже у вас у друзях.");
+    }
+    if (message.includes("request already exists")) {
+      return tr("Запрос уже отправлен.", "Запит уже надіслано.");
+    }
+    if (typeof err.responseBody === "string" && err.responseBody.trim()) {
+      return err.responseBody.trim();
+    }
+  }
+
+  return tr("Не удалось отправить запрос в друзья.", "Не вдалося надіслати запит у друзі.");
 }

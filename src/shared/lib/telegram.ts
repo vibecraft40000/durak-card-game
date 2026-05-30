@@ -173,8 +173,12 @@ export function getTelegramStartParam(): string | undefined {
 }
 
 export function getTelegramBotUsername(): string {
-  const raw = String(import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "durakton777_bot").trim();
-  return raw.startsWith("@") ? raw.slice(1) : raw;
+  const raw = String(import.meta.env.VITE_TELEGRAM_BOT_USERNAME ?? "").trim();
+  const normalized = raw.startsWith("@") ? raw.slice(1) : raw;
+  if (!normalized || normalized === "replace_with_bot_username") {
+    return "durakton777_bot";
+  }
+  return normalized;
 }
 
 export function getTelegramMiniAppShortName(): string {

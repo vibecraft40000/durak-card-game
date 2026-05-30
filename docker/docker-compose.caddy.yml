@@ -1,6 +1,5 @@
-# Git workflow: Caddy (auto SSL) + backend + frontend
-# Caddy handles HTTPS automatically, no certbot
-# Run from project root: docker compose -f docker/docker-compose.caddy.yml up -d
+# Caddy (auto SSL) + backend + frontend
+# Run: docker compose -f docker/docker-compose.caddy.yml up -d
 
 services:
   postgres:
@@ -8,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: durak
       POSTGRES_USER: durak
-      POSTGRES_PASSWORD: durak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-durak}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -30,7 +29,7 @@ services:
   migrate:
     image: migrate/migrate:v4.18.3
     command:
-      ["-path", "/migrations", "-database", "postgres://durak:durak@postgres:5432/durak?sslmode=disable", "up"]
+      ["-path", "/migrations", "-database", "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable", "up"]
     volumes:
       - ../backend/migrations:/migrations
     depends_on:
@@ -46,12 +45,12 @@ services:
       - ../.env
     environment:
       INSTANCE_ID: "api-1"
+      ENV: "${ENV:-production}"
       PORT: "8080"
-      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      POSTGRES_URL: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
       ROOM_WAIT_TIMEOUT: "5m"
-      ALLOWED_ORIGIN: "https://durakonline.duckdns.org"
-      DISABLE_MONEY: "${DISABLE_MONEY:-false}"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:-https://your-domain.example}"
     depends_on:
       postgres:
         condition: service_healthy

@@ -4,7 +4,7 @@ import { getConfig } from "@/shared/api/config";
 import { getProfile } from "@/shared/api/user";
 import { createWithdraw } from "@/shared/api/withdraw";
 import { HttpError } from "@/shared/api/http";
-import { bootstrapTelegramAuth, clearTokens } from "@/shared/api/auth";
+import { resetAndBootstrapTelegramAuth } from "@/shared/api/auth.lazy";
 import { useLanguage } from "@/shared/providers/LanguageProvider";
 import { BackIcon, CryptoBotIcon } from "@/shared/ui/Icons";
 import { AppCard } from "@/shared/ui/Card";
@@ -19,6 +19,7 @@ export function WithdrawPage() {
   const tr = (ru: string, uk: string) => (language === "uk" ? uk : ru);
 
   const [cryptoBotUsername, setCryptoBotUsername] = useState(DEFAULT_CRYPTO_BOT);
+  const [withdrawalsEnabled, setWithdrawalsEnabled] = useState<boolean | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
   const [amountInput, setAmountInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -27,12 +28,16 @@ export function WithdrawPage() {
   const amount = parseFloat(amountInput.replace(",", ".")) || 0;
   const maxAvailable = balance != null ? Math.max(0, balance) : null;
   const exceedsBalance = maxAvailable != null && amount > maxAvailable;
-  const canSubmit = amount >= MIN_AMOUNT && !exceedsBalance && !loading;
+  const canSubmit = withdrawalsEnabled === true && amount >= MIN_AMOUNT && !exceedsBalance && !loading;
+  const withdrawalsDisabled = withdrawalsEnabled === false;
 
   useEffect(() => {
     getConfig()
-      .then((cfg) => setCryptoBotUsername(cfg.cryptoBotUsername ?? DEFAULT_CRYPTO_BOT))
-      .catch(() => undefined);
+      .then((cfg) => {
+        setCryptoBotUsername(cfg.cryptoBotUsername ?? DEFAULT_CRYPTO_BOT);
+        setWithdrawalsEnabled(cfg.withdrawalsEnabled === true);
+      })
+      .catch(() => setWithdrawalsEnabled(false));
     getProfile()
       .then((r) => setBalance(r.balance))
       .catch(() => setBalance(0));
@@ -49,9 +54,8 @@ export function WithdrawPage() {
     } catch (err: unknown) {
       const status = (err as { status?: number })?.status;
       if (status === 401) {
-        clearTokens();
         try {
-          await bootstrapTelegramAuth();
+          await resetAndBootstrapTelegramAuth();
           await createWithdraw(amount);
           navigate("/profile");
           return;
@@ -91,35 +95,46 @@ export function WithdrawPage() {
             <span className="withdraw-method__desc">{tr("Вывод через", "Виведення через")} @{cryptoBotUsername}</span>
           </div>
         </div>
-        <p className="withdraw-hint">
-          {tr(
-            `После отправки заявки администратору приходит уведомление о выводе. Сумма указывается в USD, выплата в USDT через @${cryptoBotUsername}. При необходимости администратор свяжется с вами в Telegram и подтвердит вывод.`,
-            `Після відправлення заявки адміністратор отримує сповіщення про виведення. Сума вказується в USD, виплата в USDT через @${cryptoBotUsername}. За потреби адміністратор зв'яжеться з вами в Telegram і підтвердить виведення.`,
-          )}
-        </p>
-        <p className="withdraw-label">{tr("Сумма вывода (USD)", "Сума виведення (USD)")}</p>
-        <input
-          type="number"
-          inputMode="decimal"
-          min={MIN_AMOUNT}
-          step={0.01}
-          placeholder="0"
-          value={amountInput}
-          onChange={(e) => setAmountInput(e.target.value)}
-          className={`withdraw-input ${exceedsBalance ? "withdraw-input--error" : ""}`}
-          aria-describedby={exceedsBalance ? "withdraw-max-hint" : undefined}
-        />
-        {maxAvailable != null && (
-          <p id="withdraw-max-hint" className={`withdraw-max ${exceedsBalance ? "withdraw-max--error" : ""}`}>
-            {exceedsBalance
-              ? tr(
-                  `Максимально доступная сумма для вывода: ${maxAvailable.toFixed(2)} USD`,
-                  `Максимально доступна сума для виведення: ${maxAvailable.toFixed(2)} USD`,
-                )
-              : tr(`Доступно: ${maxAvailable.toFixed(2)} USD`, `Доступно: ${maxAvailable.toFixed(2)} USD`)}
+        {withdrawalsDisabled ? (
+          <p className="withdraw-error">
+            {tr(
+              "В первой публичной бете вывод средств отключен. Сейчас доступны игра и пополнение баланса, вывод откроется отдельным релизом после дополнительной проверки безопасности.",
+              "У першій публічній beta виведення коштів вимкнене. Зараз доступні гра та поповнення балансу, виведення відкриється окремим релізом після додаткової перевірки безпеки.",
+            )}
           </p>
+        ) : (
+          <>
+            <p className="withdraw-hint">
+              {tr(
+                `После отправки заявки администратору приходит уведомление о выводе. Сумма указывается в USD, выплата в USDT через @${cryptoBotUsername}. При необходимости администратор свяжется с вами в Telegram и подтвердит вывод.`,
+                `Після відправлення заявки адміністратор отримує сповіщення про виведення. Сума вказується в USD, виплата в USDT через @${cryptoBotUsername}. За потреби адміністратор зв'яжеться з вами в Telegram і підтвердить виведення.`,
+              )}
+            </p>
+            <p className="withdraw-label">{tr("Сумма вывода (USD)", "Сума виведення (USD)")}</p>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={MIN_AMOUNT}
+              step={0.01}
+              placeholder="0"
+              value={amountInput}
+              onChange={(e) => setAmountInput(e.target.value)}
+              className={`withdraw-input ${exceedsBalance ? "withdraw-input--error" : ""}`}
+              aria-describedby={exceedsBalance ? "withdraw-max-hint" : undefined}
+            />
+            {maxAvailable != null && (
+              <p id="withdraw-max-hint" className={`withdraw-max ${exceedsBalance ? "withdraw-max--error" : ""}`}>
+                {exceedsBalance
+                  ? tr(
+                      `Максимально доступная сумма для вывода: ${maxAvailable.toFixed(2)} USD`,
+                      `Максимально доступна сума для виведення: ${maxAvailable.toFixed(2)} USD`,
+                    )
+                  : tr(`Доступно: ${maxAvailable.toFixed(2)} USD`, `Доступно: ${maxAvailable.toFixed(2)} USD`)}
+              </p>
+            )}
+            <p className="withdraw-min">{tr("Минимум: 5 USD (требование Crypto Pay)", "Мінімум: 5 USD (вимога Crypto Pay)")}</p>
+          </>
         )}
-        <p className="withdraw-min">{tr("Минимум: 5 USD (требование Crypto Pay)", "Мінімум: 5 USD (вимога Crypto Pay)")}</p>
         {error && (
           <>
             <p className="withdraw-error">{error}</p>
@@ -134,18 +149,20 @@ export function WithdrawPage() {
             )}
           </>
         )}
-        <button
-          type="button"
-          className="button button--primary withdraw-submit"
-          onClick={handleWithdraw}
-          disabled={!canSubmit}
-        >
-          {loading
-            ? tr("Обработка...", "Обробка...")
-            : amount > 0
-              ? tr(`Вывести $${amount.toFixed(2)}`, `Вивести $${amount.toFixed(2)}`)
-              : tr("Вывести", "Вивести")}
-        </button>
+        {!withdrawalsDisabled && (
+          <button
+            type="button"
+            className="button button--primary withdraw-submit"
+            onClick={handleWithdraw}
+            disabled={!canSubmit}
+          >
+            {loading
+              ? tr("Обработка...", "Обробка...")
+              : amount > 0
+                ? tr(`Вывести $${amount.toFixed(2)}`, `Вивести $${amount.toFixed(2)}`)
+                : tr("Вывести", "Вивести")}
+          </button>
+        )}
       </AppCard>
 
       <style>{`

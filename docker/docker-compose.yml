@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: durak
       POSTGRES_USER: durak
-      POSTGRES_PASSWORD: durak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-durak}
     ports:
       - "5432:5432"
     volumes:
@@ -32,7 +32,7 @@ services:
         "-path",
         "/migrations",
         "-database",
-        "postgres://durak:durak@postgres:5432/durak?sslmode=disable",
+        "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable",
         "up",
       ]
     volumes:
@@ -47,14 +47,14 @@ services:
       dockerfile: Dockerfile
     environment:
       INSTANCE_ID: "api-1"
+      ENV: "development"
       PORT: "8080"
       PPROF_PORT: "6060"
-      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      POSTGRES_URL: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
-      JWT_SECRET: "dev-secret"
+      JWT_SECRET: "${JWT_SECRET:-dev-secret}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-dev-bot-token}"
       ALLOW_DEV_TELEGRAM_AUTH: "true"
-      DISABLE_MONEY: "true"
       ROOM_WAIT_TIMEOUT: "5m"
       ALLOWED_ORIGIN: "*"
     ports:
@@ -74,14 +74,14 @@ services:
       dockerfile: Dockerfile
     environment:
       INSTANCE_ID: "api-2"
+      ENV: "development"
       PORT: "8080"
       PPROF_PORT: "6060"
-      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      POSTGRES_URL: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
-      JWT_SECRET: "dev-secret"
+      JWT_SECRET: "${JWT_SECRET:-dev-secret}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-dev-bot-token}"
       ALLOW_DEV_TELEGRAM_AUTH: "true"
-      DISABLE_MONEY: "true"
       ROOM_WAIT_TIMEOUT: "5m"
       ALLOWED_ORIGIN: "*"
     ports:
@@ -112,9 +112,9 @@ services:
       target: test
     working_dir: /app
     environment:
-      POSTGRES_URL: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      POSTGRES_URL: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       REDIS_URL: "redis://redis:6379/0"
-      INTEGRATION_PG_DSN: "postgres://durak:durak@postgres:5432/durak?sslmode=disable"
+      INTEGRATION_PG_DSN: "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable"
       INTEGRATION_REDIS_URL: "redis://redis:6379/0"
       CGO_ENABLED: "1"
     command: >
@@ -158,8 +158,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: "admin"
-      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

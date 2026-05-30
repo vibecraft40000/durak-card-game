@@ -2,10 +2,12 @@ services:
   bot:
     build: .
     environment:
+      BOT_ENV: ${BOT_ENV:-development}
       BOT_TOKEN: ${BOT_TOKEN}
-      WEBAPP_URL: ${WEBAPP_URL:-https://durakonline.duckdns.org}
+      WEBAPP_URL: ${WEBAPP_URL:-https://your-domain.example}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
+      REDIS_URL: ${REDIS_URL:-}
       HOST: 0.0.0.0
       PORT: 8081
     ports:

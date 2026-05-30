@@ -5,7 +5,7 @@
 Cloudflared работает стабильнее ngrok (TCP, нет блокировок).
 
 ```powershell
-cd "c:\Users\GANG\Desktop\cursor project\durakonline"
+cd ".\durak-card-game"
 .\scripts\run-all.ps1
 ```
 

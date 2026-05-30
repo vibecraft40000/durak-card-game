@@ -1,16 +1,27 @@
 import { emitWsEvent } from "@/shared/api/ws/events";
-import type { ClientIntent, ClientWsEvent, IntentType, ServerWsEvent } from "@/shared/api/ws/types";
-import { getAccessToken } from "@/shared/api/auth";
+import type { ClientWsEvent, IntentType, ServerWsEvent } from "@/shared/api/ws/types";
+import { issueWsTicket } from "@/shared/api/ws/ticket";
+import { getRuntimeLanguage } from "@/shared/i18n/runtime";
 import { getGameState, setInteractionLocked } from "@/store/game.store";
 import { mapServerErrorToMessage } from "@/shared/utils/mapServerErrorToMessage";
 
 const RAW_WS_URL = import.meta.env.VITE_WS_URL ?? "/ws";
+const WS_PACKET_DISORDER_ENABLED =
+  import.meta.env.DEV && toBool(import.meta.env.VITE_WS_PACKET_DISORDER);
+const WS_PACKET_DISORDER_MAX_DELAY_MS = toNonNegativeInt(
+  import.meta.env.VITE_WS_PACKET_DISORDER_MAX_DELAY_MS,
+  450,
+);
+const WS_PACKET_DUPLICATE_RATE = clamp01(
+  toNumber(import.meta.env.VITE_WS_PACKET_DUPLICATE_RATE, 0),
+);
+let disorderConfigLogged = false;
 
 // Prefer same-origin WS on production domain to avoid localhost leaks in builds.
 const WS_URL =
   typeof window !== "undefined" &&
-  (window.location.origin === "https://durakonline.duckdns.org" ||
-    window.location.origin === "https://www.durakonline.duckdns.org")
+  (window.location.origin === "https://your-domain.example" ||
+    window.location.origin === "https://www.your-domain.example")
     ? "/ws"
     : RAW_WS_URL;
 
@@ -25,90 +36,19 @@ class WsClient {
   private socket: WebSocket | null = null;
   private connectedRoomId: string | null = null;
   private reconnectAttempts = 0;
+  private connectAttemptId = 0;
+  private isConnecting = false;
 
   connect(roomId: string) {
-    if (this.socket && this.connectedRoomId === roomId) {
+    if (this.connectedRoomId === roomId && (this.socket || this.isConnecting)) {
       return;
     }
 
     this.disconnect();
     this.connectedRoomId = roomId;
-    const token = getAccessToken();
-    const url = resolveWsUrl(WS_URL);
-    if (token) {
-      url.searchParams.set("token", token);
-    }
-    url.searchParams.set("roomId", roomId);
-    this.socket = new WebSocket(url.toString());
-
-    this.socket.addEventListener("open", () => {
-      const isReconnect = this.reconnectAttempts > 0;
-      this.reconnectAttempts = 0;
-      connectionHandler?.("connect");
-      this.send({
-        type: isReconnect ? "reconnect" : "join_room",
-        payload: { roomId },
-      });
-      if (isReconnect) {
-        setTimeout(() => this.send({ type: "sync_request", payload: { roomId } }), 100);
-      }
-    });
-
-    this.socket.addEventListener("message", (event) => {
-      const parsed = tryParse(event.data);
-      if (parsed) {
-        emitWsEvent(parsed);
-
-        // Попытка вытащить ошибку интента из серверного события и ретранслировать в UI
-        try {
-          const anyParsed = parsed as any;
-          const errPayload =
-            anyParsed?.error ||
-            anyParsed?.intentError ||
-            (anyParsed?.type === "intent_response" && anyParsed?.error) ||
-            anyParsed?.intentResponse?.error;
-
-          if (errPayload) {
-            const mapped = mapServerErrorToMessage(errPayload);
-            // eslint-disable-next-line no-console
-            console.warn("[ws] intent error:", { raw: errPayload, mapped });
-
-            window.dispatchEvent(
-              new CustomEvent("tma:intentError", {
-                detail: {
-                  raw: errPayload,
-                  text: mapped.text,
-                  code: mapped.code,
-                  original: anyParsed,
-                },
-              }),
-            );
-          }
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error("[ws] error while handling intent error payload", err);
-        }
-      }
-    });
-
-    this.socket.addEventListener("close", () => {
-      const roomToReconnect = this.connectedRoomId;
-      this.socket = null;
-      if (roomToReconnect) {
-        connectionHandler?.("disconnect");
-      }
-      if (!roomToReconnect) {
-        return;
-      }
-      const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10000);
-      this.reconnectAttempts += 1;
-      window.setTimeout(() => {
-        if (this.connectedRoomId !== roomToReconnect) {
-          return;
-        }
-        this.connect(roomToReconnect);
-      }, delay);
-    });
+    const attemptId = ++this.connectAttemptId;
+    this.isConnecting = true;
+    void this.openSocket(roomId, attemptId);
   }
 
   send(event: ClientWsEvent) {
@@ -118,12 +58,24 @@ class WsClient {
     this.socket.send(JSON.stringify(event));
   }
 
-  sendIntent(type: IntentType, payload?: ClientIntent["payload"]) {
+  sendIntent(type: IntentType, payload?: Record<string, unknown>) {
     const gameState = getGameState();
     const version = gameState.matchState?.version ?? 0;
     const payloadObj = (payload ?? {}) as Record<string, unknown>;
     const roomId =
       (typeof payloadObj.roomId === "string" && payloadObj.roomId) || this.connectedRoomId;
+
+    if (type === "confirmStake") {
+      if (!roomId) {
+        return;
+      }
+      this.send({
+        type: "confirm_stake",
+        payload: { roomId },
+      });
+      return;
+    }
+
     const action = mapIntentToWireAction(type);
     if (!roomId || !action) {
       return;
@@ -145,11 +97,116 @@ class WsClient {
   }
 
   disconnect() {
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
+    this.connectAttemptId += 1;
+    this.isConnecting = false;
+    const socket = this.socket;
+    this.socket = null;
     this.connectedRoomId = null;
+    if (socket) {
+      socket.close();
+    }
+  }
+
+  private async openSocket(roomId: string, attemptId: number): Promise<void> {
+    try {
+      const ticket = await issueWsTicket(roomId);
+      if (!this.isAttemptCurrent(roomId, attemptId)) {
+        return;
+      }
+
+      const url = resolveWsUrl(WS_URL);
+      url.searchParams.set("ticket", ticket);
+      url.searchParams.set("roomId", roomId);
+      url.searchParams.set("locale", getRuntimeLanguage());
+
+      const socket = new WebSocket(url.toString());
+      if (!this.isAttemptCurrent(roomId, attemptId)) {
+        socket.close();
+        return;
+      }
+
+      this.socket = socket;
+      this.attachSocket(socket, roomId, attemptId);
+    } catch {
+      if (!this.isAttemptCurrent(roomId, attemptId)) {
+        return;
+      }
+      this.isConnecting = false;
+      connectionHandler?.("disconnect");
+      this.scheduleReconnect(roomId, attemptId);
+    }
+  }
+
+  private attachSocket(socket: WebSocket, roomId: string, attemptId: number): void {
+    socket.addEventListener("open", () => {
+      if (!this.isCurrentSocket(socket, roomId, attemptId)) {
+        socket.close();
+        return;
+      }
+
+      logDisorderConfigOnce();
+      this.isConnecting = false;
+      const isReconnect = this.reconnectAttempts > 0;
+      this.reconnectAttempts = 0;
+      connectionHandler?.("connect");
+      const knownVersion = getGameState().matchState?.version;
+      const knownMatchId = getGameState().matchState?.matchId;
+      this.send({
+        type: isReconnect ? "reconnect" : "join_room",
+        payload: {
+          roomId,
+          ...(typeof knownVersion === "number" ? { lastKnownVersion: knownVersion } : {}),
+          ...(typeof knownMatchId === "string" && knownMatchId
+            ? { lastKnownMatchId: knownMatchId }
+            : {}),
+          supportsStateDiff: true,
+        },
+      });
+    });
+
+    socket.addEventListener("message", (event) => {
+      if (!this.isCurrentSocket(socket, roomId, attemptId)) {
+        return;
+      }
+      const parsed = tryParse(event.data);
+      if (parsed) {
+        scheduleIncomingEvent(parsed);
+      }
+    });
+
+    socket.addEventListener("close", () => {
+      if (!this.isAttemptCurrent(roomId, attemptId)) {
+        return;
+      }
+      if (this.socket === socket) {
+        this.socket = null;
+      }
+      this.isConnecting = false;
+      connectionHandler?.("disconnect");
+      this.scheduleReconnect(roomId, attemptId);
+    });
+  }
+
+  private scheduleReconnect(roomId: string, attemptId: number): void {
+    if (!this.isAttemptCurrent(roomId, attemptId)) {
+      return;
+    }
+    const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 10000);
+    this.reconnectAttempts += 1;
+    window.setTimeout(() => {
+      if (!this.isAttemptCurrent(roomId, attemptId)) {
+        return;
+      }
+      this.connect(roomId);
+    }, delay);
+  }
+
+  private isAttemptCurrent(roomId: string, attemptId: number): boolean {
+    return this.connectedRoomId === roomId && this.connectAttemptId === attemptId;
+  }
+
+  private isCurrentSocket(socket: WebSocket, roomId: string, attemptId: number): boolean {
+    return this.socket === socket && this.isAttemptCurrent(roomId, attemptId);
   }
 }
 
@@ -163,18 +220,118 @@ function tryParse(data: string): ServerWsEvent | null {
 
 export const wsClient = new WsClient();
 
+function scheduleIncomingEvent(event: ServerWsEvent): void {
+  if (!WS_PACKET_DISORDER_ENABLED || typeof window === "undefined") {
+    dispatchIncomingEvent(event);
+    return;
+  }
+  const delayMs = randomDelayMs();
+  window.setTimeout(() => {
+    dispatchIncomingEvent(event);
+  }, delayMs);
+  if (WS_PACKET_DUPLICATE_RATE > 0 && Math.random() < WS_PACKET_DUPLICATE_RATE) {
+    const duplicateDelayMs = randomDelayMs();
+    window.setTimeout(() => {
+      dispatchIncomingEvent(event);
+    }, duplicateDelayMs);
+  }
+}
+
+function dispatchIncomingEvent(parsed: ServerWsEvent): void {
+  emitWsEvent(parsed);
+
+  try {
+    const anyParsed = parsed as any;
+    const errPayload =
+      anyParsed?.error ||
+      anyParsed?.intentError ||
+      (anyParsed?.type === "intent_response" && anyParsed?.error) ||
+      anyParsed?.intentResponse?.error;
+
+    if (errPayload) {
+      const mapped = mapServerErrorToMessage(errPayload);
+      // eslint-disable-next-line no-console
+      console.warn("[ws] intent error:", { raw: errPayload, mapped });
+
+      window.dispatchEvent(
+        new CustomEvent("tma:intentError", {
+          detail: {
+            raw: errPayload,
+            text: mapped.text,
+            code: mapped.code,
+            original: anyParsed,
+          },
+        }),
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[ws] error while handling intent error payload", err);
+  }
+}
+
+function randomDelayMs(): number {
+  if (WS_PACKET_DISORDER_MAX_DELAY_MS <= 0) {
+    return 0;
+  }
+  return Math.floor(Math.random() * (WS_PACKET_DISORDER_MAX_DELAY_MS + 1));
+}
+
+function toBool(value: unknown): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "on";
+}
+
+function toNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toNonNegativeInt(value: unknown, fallback: number): number {
+  const parsed = Math.floor(toNumber(value, fallback));
+  return parsed >= 0 ? parsed : fallback;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+
+function logDisorderConfigOnce(): void {
+  if (!WS_PACKET_DISORDER_ENABLED || disorderConfigLogged) {
+    return;
+  }
+  disorderConfigLogged = true;
+  // eslint-disable-next-line no-console
+  console.warn("[ws] packet disorder mode enabled", {
+    maxDelayMs: WS_PACKET_DISORDER_MAX_DELAY_MS,
+    duplicateRate: WS_PACKET_DUPLICATE_RATE,
+  });
+}
+
 function mapIntentToWireAction(type: IntentType):
   | "attack_card"
   | "defend_card"
+  | "throw_card"
   | "translate"
   | "take_cards"
   | "pass_turn"
+  | "shuler_play"
   | "shuler_report"
   | null {
   switch (type) {
     case "playAttack":
-    case "throwIn":
       return "attack_card";
+    case "throwIn":
+      return "throw_card";
     case "translate":
       return "translate";
     case "playDefend":
@@ -183,8 +340,9 @@ function mapIntentToWireAction(type: IntentType):
       return "take_cards";
     case "pass":
     case "endTurn":
-    case "confirmStake":
       return "pass_turn";
+    case "shulerPlay":
+      return "shuler_play";
     case "shulerReport":
       return "shuler_report";
     default:

@@ -37,6 +37,8 @@ export type CreateRoomInput = {
 export type MatchActionType =
   | "attack"
   | "defend"
+  | "throw"
+  | "shuler_play"
   | "take"
   | "pass"
   | "translate"

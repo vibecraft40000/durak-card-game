@@ -1,22 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Вход — Админка{% endblock %}
+{% block title %}Р’С…РѕРґ вЂ” РђРґРјРёРЅРєР°{% endblock %}
 {% block content %}
-<h1>Вход в админку</h1>
+<h1>Р’С…РѕРґ РІ Р°РґРјРёРЅРєСѓ</h1>
 <div class="card" style="max-width: 320px;">
-  <form method="post" action="{{ url_for('auth.login') }}">
+  <form method="post" action="{{ url_for('auth.login', next=request.args.get('next', '')) }}">
+    <input type="hidden" name="{{ csrf_field_name }}" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
     <div class="form-group">
-      <label for="username">Логин</label>
+      <label for="username">Р›РѕРіРёРЅ</label>
       <input type="text" id="username" name="username" required autofocus>
     </div>
     <div class="form-group">
-      <label for="password">Пароль</label>
+      <label for="password">РџР°СЂРѕР»СЊ</label>
       <input type="password" id="password" name="password" required>
     </div>
     <div class="form-group">
-      <label><input type="checkbox" name="remember"> Запомнить</label>
+      <label><input type="checkbox" name="remember"> Р—Р°РїРѕРјРЅРёС‚СЊ</label>
     </div>
-    <button type="submit" class="btn">Войти</button>
+    <button type="submit" class="btn">Р’РѕР№С‚Рё</button>
   </form>
 </div>
-<p style="color: #565f89;">Дурак Онлайн — панель администратора</p>
+<p style="color: #565f89;">Р”СѓСЂР°Рє РћРЅР»Р°Р№РЅ вЂ” РїР°РЅРµР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°</p>
 {% endblock %}

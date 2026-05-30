@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Deploy to durakonline.duckdns.org via SSH/SCP."""
+"""Deploy to your server via SSH/SCP."""
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-HOST = "72.56.74.7"
+HOST = "YOUR_SERVER_IP"
 USER = "root"
 REMOTE_PATH = "/root/durakonline"
 
@@ -16,12 +16,8 @@ def main():
     if not pw and len(sys.argv) > 1:
         pw = sys.argv[1]
     if not pw:
-        pw_file = PROJECT_ROOT / ".deploy-pw"
-        if pw_file.exists():
-            pw = pw_file.read_text(encoding="utf-8").strip()
-    if not pw:
         import getpass
-        pw = getpass.getpass("Password (root@72.56.74.7): ")
+        pw = getpass.getpass("Password (root@YOUR_SERVER_IP): ")
 
     try:
         import paramiko
@@ -92,7 +88,7 @@ def main():
     if err:
         print(err, file=sys.stderr)
     ssh.close()
-    print("\nDone. https://durakonline.duckdns.org")
+    print("\nDone. https://your-domain.example")
 
 
 if __name__ == "__main__":

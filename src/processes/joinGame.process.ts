@@ -1,13 +1,18 @@
 import { initializeMockMatch, isMockApiEnabled } from "@/mocks/mockApi";
+import { createJoinGameMoveReplayBuffer } from "@/processes/joinGameMoveReplayBuffer";
+import { ReplayDebugTracker } from "@/processes/replayDebug";
 import { httpRequest } from "@/shared/api/http";
 import { onWsEvent } from "@/shared/api/ws/events";
 import { setConnectionHandler, wsClient } from "@/shared/api/ws/socket";
 import { trRuntime } from "@/shared/i18n/runtime";
+import { mapServerErrorToMessage } from "@/shared/utils/mapServerErrorToMessage";
 import {
   addActivity,
   addActivityItem,
   clearGameError,
   getGameState,
+  pruneStaleMoveActivity,
+  resetActivityForMatchFinished,
   setGameConnecting,
   setGameError,
   setGameReady,
@@ -20,6 +25,8 @@ import {
   setReconnectingPlayer,
 } from "@/store/game.store";
 import { setSocketReconnecting } from "@/store/socket.store";
+const RESET_ACTIVITY_ON_MATCH_FINISH =
+  String(import.meta.env.VITE_MATCH_ACTIVITY_RESET_ON_FINISH ?? "1") !== "0";
 
 export async function joinGameRoom(roomId: string) {
   setGameConnecting(roomId);
@@ -45,6 +52,28 @@ export async function joinGameRoom(roomId: string) {
     setSocketReconnecting(event === "disconnect");
   }); // connect -> false, disconnect -> true
 
+  const replayDebug = new ReplayDebugTracker(roomId);
+
+  const hasMoveEventIdInActivity = (eventId: string): boolean =>
+    getGameState().activity.some(
+      (item) => item.type === "move" && item.eventId === eventId,
+    );
+
+  const moveReplayBuffer = createJoinGameMoveReplayBuffer({
+    getCurrentVersion: () => getGameState().matchState?.version,
+    hasMoveEventIdInActivity,
+    addBufferedMove: (move) => {
+      addActivityItem({
+        eventId: move.eventId,
+        playerId: move.playerId,
+        action: move.action,
+        cardId: move.cardId,
+        timestamp: move.receivedAt,
+      });
+    },
+    replayDebug,
+  });
+
   const offRoom = onWsEvent("room_update", () => {
     setGameReady();
     addActivity(trRuntime(`Подключение к комнате ${roomId}`, `Підключення до кімнати ${roomId}`));
@@ -58,6 +87,51 @@ export async function joinGameRoom(roomId: string) {
     clearGameError();
     lastGameStateAt = Date.now();
     setMatchStateIfNewer(payload);
+    pruneStaleMoveActivity(payload.version);
+    replayDebug.setStateVersion(payload.version);
+    moveReplayBuffer.flush();
+  });
+
+  const offStateSync = onWsEvent("state_sync", ({ payload }) => {
+    if (payload?.roomId !== roomId) {
+      return;
+    }
+    replayDebug.markSync(payload.mode);
+  });
+
+  const offStateDiff = onWsEvent("state_diff", ({ payload }) => {
+    if (payload?.roomId !== roomId) {
+      return;
+    }
+    const current = getGameState().matchState;
+    if (!current) {
+      return;
+    }
+    const nextVersion =
+      typeof payload.toVersion === "number"
+        ? payload.toVersion
+        : typeof payload.patch?.version === "number"
+          ? payload.patch.version
+          : current.version;
+    if (
+      typeof current.version === "number" &&
+      typeof nextVersion === "number" &&
+      nextVersion <= current.version
+    ) {
+      return;
+    }
+    const merged = {
+      ...current,
+      ...payload.patch,
+      version: nextVersion,
+      roomId: payload.roomId,
+    };
+    setMatchStateIfNewer(merged);
+    if (typeof nextVersion === "number") {
+      pruneStaleMoveActivity(nextVersion);
+      replayDebug.setStateVersion(nextVersion);
+    }
+    moveReplayBuffer.flush();
   });
 
   const SYNC_FALLBACK_MS = 5000;
@@ -67,25 +141,26 @@ export async function joinGameRoom(roomId: string) {
       matchState?.status === "playing" &&
       Date.now() - lastGameStateAt > SYNC_FALLBACK_MS
     ) {
-      wsClient.send({ type: "sync_request", payload: { roomId } });
+      replayDebug.incSyncRequest();
+      wsClient.send({
+        type: "sync_request",
+        payload: {
+          roomId,
+          ...(typeof matchState.version === "number"
+            ? { lastKnownVersion: matchState.version }
+            : {}),
+          ...(typeof matchState.matchId === "string" && matchState.matchId
+            ? { lastKnownMatchId: matchState.matchId }
+            : {}),
+          supportsStateDiff: true,
+        },
+      });
     }
   }, 2000);
 
   const offMove = onWsEvent("move_applied", ({ payload }) => {
     if (payload?.roomId !== roomId || !payload?.playerId) return;
-    const eventId = payload.eventId ?? `${payload.matchId}-${Date.now()}`;
-    const { activity } = getGameState();
-    const alreadyExists = activity.some(
-      (a) => a.type === "move" && a.eventId === eventId,
-    );
-    if (alreadyExists) return;
-    addActivityItem({
-      eventId,
-      playerId: payload.playerId,
-      action: payload.action,
-      cardId: payload.cardId,
-      timestamp: Date.now(),
-    });
+    moveReplayBuffer.handleMoveApplied(payload);
   });
 
   const offTimer = onWsEvent("timer_update", ({ payload }) => {
@@ -93,6 +168,7 @@ export async function joinGameRoom(roomId: string) {
   });
 
   const offFinished = onWsEvent("match_finished", ({ payload }) => {
+    if (payload?.roomId !== roomId) return;
     const { isFinishedHandled } = getGameState();
     if (isFinishedHandled) return;
     setIsFinishedHandled(true);
@@ -110,14 +186,17 @@ export async function joinGameRoom(roomId: string) {
     if (payload.payouts && payload.payouts.length > 0) {
       setMatchResult({
         settlementId: payload.settlementId,
-        payouts: payload.payouts,
+        netResults: payload.payouts,
         commission: payload.commission,
         pot: payload.pot,
         newBalances: payload.newBalances,
         abandoned: payload.abandoned,
       });
     } else {
-      setMatchResult({ payouts: [], abandoned: payload.abandoned });
+      setMatchResult({ netResults: [], abandoned: payload.abandoned });
+    }
+    if (RESET_ACTIVITY_ON_MATCH_FINISH) {
+      resetActivityForMatchFinished();
     }
   });
 
@@ -125,7 +204,27 @@ export async function joinGameRoom(roomId: string) {
     if (payload?.errorCode === "VERSION_MISMATCH") {
       return; // Handled by version_mismatch, no error UI
     }
-    setGameError(payload?.message ?? trRuntime("Ошибка", "Помилка"));
+    const mapped = mapServerErrorToMessage({
+      code: payload?.errorCode,
+      message: payload?.message,
+    });
+    setGameError(mapped.text);
+
+    if (
+      payload?.errorCode === "INVALID_ACTION" ||
+      payload?.errorCode === "INVALID_CARD" ||
+      payload?.errorCode === "INVALID_TURN"
+    ) {
+      window.dispatchEvent(
+        new CustomEvent("tma:intentError", {
+          detail: {
+            raw: payload,
+            text: mapped.text,
+            code: mapped.code ?? payload.errorCode,
+          },
+        }),
+      );
+    }
   });
 
   const offVersionMismatch = onWsEvent("version_mismatch", ({ payload }) => {
@@ -145,10 +244,12 @@ export async function joinGameRoom(roomId: string) {
         action: (action ?? "pass_turn") as
           | "attack_card"
           | "defend_card"
+          | "throw_card"
           | "translate"
           | "take_cards"
           | "pass_turn"
           | "end_round"
+          | "shuler_play"
           | "shuler_report",
         ...(cardId && { cardId }),
         ...expectedVersion,
@@ -164,6 +265,17 @@ export async function joinGameRoom(roomId: string) {
     }
   });
 
+  const offBotTakeover = onWsEvent("player_afk_bot_takeover", ({ payload }) => {
+    if (payload?.roomId !== roomId || !payload?.playerId) return;
+    setReconnectingPlayer(null);
+    addActivity(
+      trRuntime(
+        "Игрок долго офлайн. Для него включены автоходы.",
+        "Гравець довго офлайн. Для нього ввімкнено автоходи.",
+      ),
+    );
+  });
+
   const offReconnected = onWsEvent("player_reconnected", ({ payload }) => {
     if (payload?.roomId === roomId && payload?.playerId) {
       setReconnectingPlayer(null);
@@ -177,15 +289,19 @@ export async function joinGameRoom(roomId: string) {
     setSocketReconnecting(false);
     offRoom();
     offState();
+    offStateSync();
+    offStateDiff();
     offMove();
     offTimer();
     offFinished();
     offError();
     offVersionMismatch();
     offDisconnected();
+    offBotTakeover();
     offReconnected();
     setReconnectingPlayer(null);
     setMatchFinishedAbandoned(false);
+    replayDebug.dispose();
     wsClient.disconnect();
   };
 }

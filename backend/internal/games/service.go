@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
-	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/gameresults"
+	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,9 +19,25 @@ import (
 )
 
 var (
-	ErrMatchNotFound    = errors.New("match not found")
-	ErrVersionMismatch  = errors.New("version mismatch: state changed")
+	ErrMatchNotFound   = errors.New("match not found")
+	ErrVersionMismatch = errors.New("version mismatch: state changed")
 )
+
+type DisconnectPolicy string
+
+const (
+	DisconnectPolicyAbandon     DisconnectPolicy = "abandon"
+	DisconnectPolicyBotTakeover DisconnectPolicy = "bot_takeover"
+)
+
+func NormalizeDisconnectPolicy(raw string) DisconnectPolicy {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "bot_takeover", "bot", "skip", "auto":
+		return DisconnectPolicyBotTakeover
+	default:
+		return DisconnectPolicyAbandon
+	}
+}
 
 type HistoryRecord struct {
 	MatchID   string          `json:"match_id"`
@@ -29,13 +46,14 @@ type HistoryRecord struct {
 }
 
 type Service struct {
-	db              *pgxpool.Pool
-	redis           *redis.Client
-	gameResultsRepo *gameresults.Repository
-	history         []HistoryRecord
-	turnTTL         time.Duration
-	stateTTL        time.Duration
-	locks           sync.Map
+	db               *pgxpool.Pool
+	redis            *redis.Client
+	gameResultsRepo  *gameresults.Repository
+	history          []HistoryRecord
+	turnTTL          time.Duration
+	stateTTL         time.Duration
+	disconnectPolicy DisconnectPolicy
+	locks            sync.Map
 }
 
 func NewService(db *pgxpool.Pool, redisClient *redis.Client, turnTTL, stateTTL time.Duration) *Service {
@@ -44,13 +62,28 @@ func NewService(db *pgxpool.Pool, redisClient *redis.Client, turnTTL, stateTTL t
 		gameResultsRepo = gameresults.NewRepository(db)
 	}
 	return &Service{
-		db:              db,
-		redis:           redisClient,
-		gameResultsRepo: gameResultsRepo,
-		history:         make([]HistoryRecord, 0, 128),
-		turnTTL:         turnTTL,
-		stateTTL:        stateTTL,
+		db:               db,
+		redis:            redisClient,
+		gameResultsRepo:  gameResultsRepo,
+		history:          make([]HistoryRecord, 0, 128),
+		turnTTL:          turnTTL,
+		stateTTL:         stateTTL,
+		disconnectPolicy: DisconnectPolicyAbandon,
 	}
+}
+
+func (s *Service) SetDisconnectPolicy(policy DisconnectPolicy) {
+	if policy == "" {
+		policy = DisconnectPolicyAbandon
+	}
+	s.disconnectPolicy = policy
+}
+
+func (s *Service) DisconnectPolicy() DisconnectPolicy {
+	if s.disconnectPolicy == "" {
+		return DisconnectPolicyAbandon
+	}
+	return s.disconnectPolicy
 }
 
 func (s *Service) StartMatch(ctx context.Context, matchID string, stake float64, mode string, players []string) (engine.GameState, error) {
@@ -153,6 +186,7 @@ func (s *Service) applyCore(ctx context.Context, matchID string, state *engine.G
 	}
 	if state.Status == engine.StatusFinished {
 		s.redis.ZRem(ctx, turnDeadlinesKey(), matchID)
+		s.clearDisconnectMarkers(ctx, matchID, state.PlayerOrder)
 		dur := 0
 		if !state.StartedAt.IsZero() {
 			dur = int(time.Since(state.StartedAt).Seconds())
@@ -302,8 +336,13 @@ func disconnectedKey(matchID, playerID string) string {
 	return "match:disconnected:" + matchID + ":" + playerID
 }
 
+func botTakeoverKey(matchID, playerID string) string {
+	return "match:bot_takeover:" + matchID + ":" + playerID
+}
+
 const disconnectGracePeriod = 60 * time.Second
 const disconnectedKeyTTL = 120 * time.Second
+const botTakeoverKeyTTL = 6 * time.Hour
 
 // MarkDisconnected records that a player disconnected (in-game grace period).
 func (s *Service) MarkDisconnected(ctx context.Context, matchID, playerID string) error {
@@ -318,16 +357,26 @@ func (s *Service) MarkDisconnected(ctx context.Context, matchID, playerID string
 // ClearDisconnected removes the disconnected marker when player reconnects.
 func (s *Service) ClearDisconnected(ctx context.Context, matchID, playerID string) error {
 	key := disconnectedKey(matchID, playerID)
+	botKey := botTakeoverKey(matchID, playerID)
 	start := time.Now()
-	err := s.redis.Del(ctx, key).Err()
+	err := s.redis.Del(ctx, key, botKey).Err()
 	metrics.ObserveRedisLatency("del_disconnected", start)
 	return err
 }
 
-// AbandonResult is returned when a match is force-finished due to disconnect timeout.
-type AbandonResult struct {
-	MatchID string
-	State   engine.GameState
+type DisconnectResolutionKind string
+
+const (
+	DisconnectResolutionAbandon     DisconnectResolutionKind = "abandon"
+	DisconnectResolutionBotTakeover DisconnectResolutionKind = "bot_takeover"
+)
+
+// DisconnectResolution is returned when disconnect timeout policy was applied.
+type DisconnectResolution struct {
+	MatchID  string
+	PlayerID string
+	State    engine.GameState
+	Kind     DisconnectResolutionKind
 }
 
 // TimeoutResult is returned when HandleTimeouts successfully applies an auto-action.
@@ -339,9 +388,9 @@ type TimeoutResult struct {
 	PlayerID string
 }
 
-// HandleDisconnectTimeouts finds players disconnected > 60s and force-finishes those matches.
-func (s *Service) HandleDisconnectTimeouts(ctx context.Context) []AbandonResult {
-	var results []AbandonResult
+// HandleDisconnectTimeouts applies disconnect policy for players offline > grace period.
+func (s *Service) HandleDisconnectTimeouts(ctx context.Context) []DisconnectResolution {
+	var results []DisconnectResolution
 	start := time.Now()
 	matchIDs, err := s.redis.SMembers(ctx, "matches:active").Result()
 	metrics.ObserveRedisLatency("smembers_matches_active", start)
@@ -371,12 +420,29 @@ func (s *Service) HandleDisconnectTimeouts(ctx context.Context) []AbandonResult 
 			if now.Sub(disconnectedAt) < disconnectGracePeriod {
 				continue
 			}
-			// Disconnected > 60s -> force abandon
-			abandoned, err := s.ForceAbandon(ctx, matchID, playerID)
-			if err == nil {
-				results = append(results, AbandonResult{MatchID: matchID, State: abandoned})
+			switch s.DisconnectPolicy() {
+			case DisconnectPolicyBotTakeover:
+				updatedState, err := s.EnableBotTakeover(ctx, matchID, playerID)
+				if err == nil {
+					results = append(results, DisconnectResolution{
+						MatchID:  matchID,
+						PlayerID: playerID,
+						State:    updatedState,
+						Kind:     DisconnectResolutionBotTakeover,
+					})
+				}
+			default:
+				abandoned, err := s.ForceAbandon(ctx, matchID, playerID)
+				if err == nil {
+					results = append(results, DisconnectResolution{
+						MatchID:  matchID,
+						PlayerID: playerID,
+						State:    abandoned,
+						Kind:     DisconnectResolutionAbandon,
+					})
+				}
 			}
-			break // only one abandon per match per tick
+			break // only one resolution per match per tick
 		}
 	}
 	s.updateActiveMatchesGauge(ctx)
@@ -423,13 +489,77 @@ func (s *Service) ForceAbandon(ctx context.Context, matchID, disconnectedPlayerI
 	}
 	metrics.IncGameAbandon()
 	s.updateMatchFinishedWithDetails(ctx, matchID, winnerID, "disconnect_timeout", dur)
-	key := disconnectedKey(matchID, disconnectedPlayerID)
-	_ = s.redis.Del(ctx, key).Err()
+	s.clearDisconnectMarkers(ctx, matchID, state.PlayerOrder)
 	start := time.Now()
 	_ = s.redis.SRem(ctx, "matches:active", matchID).Err()
 	metrics.ObserveRedisLatency("srem_matches_active", start)
 	s.snapshotLocked(matchID, state)
 	return state, nil
+}
+
+// EnableBotTakeover switches disconnect handling from abandon to bot/auto mode for the player.
+func (s *Service) EnableBotTakeover(ctx context.Context, matchID, playerID string) (engine.GameState, error) {
+	mu := s.matchMutex(matchID)
+	mu.Lock()
+	defer mu.Unlock()
+	release, err := s.acquireRedisLock(ctx, matchID)
+	if err != nil {
+		return engine.GameState{}, err
+	}
+	defer release()
+
+	state, err := s.GetState(ctx, matchID)
+	if err != nil {
+		return engine.GameState{}, err
+	}
+	if state.Status != engine.StatusPlaying {
+		return state, nil
+	}
+	inMatch := false
+	for _, pid := range state.PlayerOrder {
+		if pid == playerID {
+			inMatch = true
+			break
+		}
+	}
+	if !inMatch {
+		return engine.GameState{}, errors.New("player not in match")
+	}
+
+	start := time.Now()
+	activated, err := s.redis.SetNX(ctx, botTakeoverKey(matchID, playerID), "1", botTakeoverKeyTTL).Result()
+	metrics.ObserveRedisLatency("setnx_bot_takeover", start)
+	if err != nil {
+		return engine.GameState{}, err
+	}
+
+	start = time.Now()
+	_ = s.redis.Del(ctx, disconnectedKey(matchID, playerID)).Err()
+	metrics.ObserveRedisLatency("del_disconnected_after_takeover", start)
+	if activated {
+		metrics.IncGameBotTakeover()
+	}
+	return state, nil
+}
+
+func (s *Service) clearDisconnectMarkers(ctx context.Context, matchID string, playerIDs []string) {
+	if len(playerIDs) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(playerIDs)*2)
+	for _, playerID := range playerIDs {
+		if playerID == "" {
+			continue
+		}
+		keys = append(keys, disconnectedKey(matchID, playerID))
+		keys = append(keys, botTakeoverKey(matchID, playerID))
+	}
+	if len(keys) == 0 {
+		return
+	}
+	start := time.Now()
+	_ = s.redis.Del(ctx, keys...).Err()
+	metrics.ObserveRedisLatency("del_disconnect_markers", start)
 }
 
 func (s *Service) matchMutex(matchID string) *sync.Mutex {

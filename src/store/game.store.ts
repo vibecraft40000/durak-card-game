@@ -20,7 +20,8 @@ export type ActivityItem = ActivityMoveItem | ActivitySystemItem;
 
 export type MatchResult = {
   settlementId?: string;
-  payouts: { userId: string; amount: number }[];
+  /** Net profit/loss per player from settlement; not a gross wallet credit. */
+  netResults: { userId: string; amount: number }[];
   commission?: number;
   pot?: number;
   newBalances?: Record<string, number>;
@@ -143,6 +144,19 @@ export function setDisplayBalance(balance: number | null) {
 }
 
 const ACTIVITY_LIMIT = 50;
+const STALE_ACTIVITY_VERSION_WINDOW = 80;
+
+function parseMoveVersionFromEventId(eventId: string): number | null {
+  const markerIndex = eventId.lastIndexOf(":v");
+  if (markerIndex < 0 || markerIndex + 2 >= eventId.length) {
+    return null;
+  }
+  const parsed = Number.parseInt(eventId.slice(markerIndex + 2), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
 
 export function addActivity(message: string) {
   const item: ActivitySystemItem = {
@@ -160,6 +174,38 @@ export function addActivityItem(item: Omit<ActivityMoveItem, "type">) {
   update({
     activity: [...state.activity, full].slice(-ACTIVITY_LIMIT),
   });
+}
+
+export function resetActivityForMatchFinished(keepLastSystemItems = 2) {
+  const keep = Math.max(0, keepLastSystemItems);
+  if (keep === 0) {
+    update({ activity: [] });
+    return;
+  }
+  const nextActivity = state.activity
+    .filter((item) => item.type === "system")
+    .slice(-keep);
+  update({ activity: nextActivity });
+}
+
+export function pruneStaleMoveActivity(currentVersion: number) {
+  if (!Number.isFinite(currentVersion) || currentVersion <= 0) {
+    return;
+  }
+  const minVersion = Math.max(0, currentVersion - STALE_ACTIVITY_VERSION_WINDOW);
+  const nextActivity = state.activity.filter((item) => {
+    if (item.type !== "move") {
+      return true;
+    }
+    const version = parseMoveVersionFromEventId(item.eventId);
+    if (version == null) {
+      return true;
+    }
+    return version >= minVersion;
+  });
+  if (nextActivity.length !== state.activity.length) {
+    update({ activity: nextActivity });
+  }
 }
 
 export function getGameState() {

@@ -39,6 +39,16 @@ func RunDisconnectTimeouts(ctx context.Context, gamesService *games.Service, roo
 				if err != nil {
 					continue
 				}
+				if r.Kind == games.DisconnectResolutionBotTakeover {
+					hub.Broadcast(roomID, ws.WithServerEventMeta(ws.ServerEvent{
+						Type: "player_afk_bot_takeover",
+						Payload: map[string]any{
+							"roomId":   roomID,
+							"playerId": r.PlayerID,
+						},
+					}, ""))
+					continue
+				}
 				var payoutInfo *games.PayoutInfo
 				if !disableMoney && !rooms.ContainsBotPlayerIn(r.State.PlayerOrder) {
 					payoutInfo, _ = gamesService.SettleMatchIfFinished(ctx, walletService, r.State, room.Stake, commissionBps)
@@ -61,7 +71,7 @@ func RunDisconnectTimeouts(ctx context.Context, gamesService *games.Service, roo
 						payload["newBalances"] = payoutInfo.NewBalances
 					}
 				}
-				hub.Broadcast(roomID, ws.ServerEvent{Type: "match_finished", Payload: payload})
+				hub.Broadcast(roomID, ws.WithServerEventMeta(ws.ServerEvent{Type: "match_finished", Payload: payload}, ""))
 			}
 		}
 	}
@@ -118,14 +128,14 @@ func RunMatchTimers(ctx context.Context, gamesService *games.Service, roomsServi
 					continue
 				}
 				lastTimerPayload[room.ID] = turnEndsMs
-				hub.Broadcast(room.ID, ws.ServerEvent{
+				hub.Broadcast(room.ID, ws.WithServerEventMeta(ws.ServerEvent{
 					Type: "timer_update",
 					Payload: map[string]any{
 						"roomId":       room.ID,
 						"turnPlayerId": state.TurnPlayerID,
 						"turnEndsAt":   turnEndsMs,
 					},
-				})
+				}, ""))
 			}
 			// Evict stale entries for rooms no longer in activeRooms
 			activeByID := make(map[string]bool)
@@ -165,8 +175,9 @@ func RunStakeConfirmationTimeouts(ctx context.Context, roomsService *rooms.Servi
 			return
 		case <-ticker.C:
 			cancelled := roomsService.CancelExpiredStakeConfirmations(ctx)
+			_ = roomsService.ReconcilePendingStarts(ctx)
 			for _, room := range cancelled {
-				hub.Broadcast(room.ID, ws.ServerEvent{Type: "room_update", Payload: room})
+				hub.Broadcast(room.ID, ws.WithServerEventMeta(ws.ServerEvent{Type: "room_update", Payload: room}, ""))
 			}
 		}
 	}

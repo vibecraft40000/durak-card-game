@@ -13,11 +13,15 @@ except ImportError:
     print("pip install paramiko")
     sys.exit(1)
 
-VPS_HOST = "72.56.74.7"
-VPS_USER = "root"
-VPS_PASSWORD = "azfzD1V+*gkevz"
+VPS_HOST = "YOUR_SERVER_IP"
+VPS_USER = os.environ.get("VPS_USER", "root")
+VPS_PASSWORD = os.environ.get("VPS_PASSWORD", "").strip()
 REMOTE_PATH = "/root/durakonline"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if not VPS_PASSWORD:
+    print("VPS_PASSWORD is required. The previously hardcoded VPS credential was removed from the repo and must be rotated out of band before reuse.")
+    sys.exit(1)
 
 
 def run(client, cmd, timeout=120):
@@ -134,22 +138,21 @@ def main():
 
     # 3) Enable our nginx site and reload host nginx
     print("Configuring host Nginx...", flush=True)
-    run(client, "sudo rm -f /etc/nginx/sites-enabled/*72*56*74* 2>/dev/null; "
-                "sudo rm -f /etc/nginx/sites-enabled/*sslip* 2>/dev/null; true")
-    code, o, e = run(client, "sudo cp /tmp/durak-nginx-sslip.conf /etc/nginx/sites-available/durak-72-56-74-7.sslip.io && "
-                         "sudo ln -sf /etc/nginx/sites-available/durak-72-56-74-7.sslip.io /etc/nginx/sites-enabled/durak-72-56-74-7.sslip.io && "
+    run(client, "sudo rm -f /etc/nginx/sites-enabled/*sslip* 2>/dev/null; true")
+    code, o, e = run(client, "sudo cp /tmp/durak-nginx-sslip.conf /etc/nginx/sites-available/durak-your-server-ip.sslip.io && "
+                         "sudo ln -sf /etc/nginx/sites-available/durak-your-server-ip.sslip.io /etc/nginx/sites-enabled/durak-your-server-ip.sslip.io && "
                          "sudo nginx -t 2>&1")
     print(o or e)
     if code != 0:
         print("Nginx -t failed. Trying without SSL block (HTTP only)...")
         # Fallback: create HTTP-only config if SSL paths missing
         run(client, "sudo sed -n '1,/^server {/p' /tmp/durak-nginx-sslip.conf | head -n -1 > /tmp/durak-http.conf; "
-            "echo '}' >> /tmp/durak-http.conf; sudo cp /tmp/durak-http.conf /etc/nginx/sites-available/durak-72-56-74-7.sslip.io")
+            "echo '}' >> /tmp/durak-http.conf; sudo cp /tmp/durak-http.conf /etc/nginx/sites-available/durak-your-server-ip.sslip.io")
         run(client, "sudo nginx -t 2>&1")
     run(client, "sudo systemctl reload nginx 2>&1")
     print("Nginx reloaded.", flush=True)
 
-    print("Done. Open https://72-56-74-7.sslip.io/", flush=True)
+    print("Done. Open https://your-server-ip.sslip.io/", flush=True)
     client.close()
     return 0
 

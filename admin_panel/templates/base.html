@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
@@ -47,7 +47,22 @@
       font-weight: 600;
     }
 
+    .nav-inline-form {
+      margin: 0;
+    }
+
+    .nav-button {
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      padding: 0;
+    }
+
     nav a:hover { text-decoration: underline; }
+    .nav-button:hover { text-decoration: underline; }
 
     .card {
       background: var(--card);
@@ -227,7 +242,10 @@
     <a href="{{ url_for('users.index') }}">Пользователи</a>
     <a href="{{ url_for('logs.index') }}">Логи</a>
     <a href="{{ url_for('settings.index') }}">Настройки</a>
-    <a href="{{ url_for('auth.logout') }}">Выход</a>
+    <form class="nav-inline-form" method="post" action="{{ url_for('auth.logout') }}">
+      <input type="hidden" name="{{ csrf_field_name }}" value="{{ csrf_token() }}">
+      <button type="submit" class="nav-button">Выход</button>
+    </form>
   </nav>
   {% endif %}
 

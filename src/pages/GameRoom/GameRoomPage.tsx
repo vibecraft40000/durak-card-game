@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { Room } from "@/entities/match/types";
 import { HttpError } from "@/shared/api/http";
@@ -27,8 +27,22 @@ function formatApiError(
   fallbackKey: string,
 ): string {
   if (e instanceof HttpError) {
-    if (e.status === 401) {
+    if (e.status === 401 || e.code === "unauthorized") {
       return t("room.error.auth");
+    }
+    switch (e.code) {
+      case "insufficient_funds":
+        return t("room.error.insufficientBalance");
+      case "start_in_progress":
+        return t("room.error.startInProgress");
+      case "stake_confirmation_required":
+        return t("room.error.stakeRequired");
+      case "stake_confirmation_expired":
+        return t("room.error.stakeExpired");
+      case "room_participant_required":
+        return t("room.error.notParticipant");
+      default:
+        break;
     }
     const body = String(e.responseBody ?? e.message ?? "").toLowerCase();
     if (body.includes("insufficient balance")) {
@@ -82,6 +96,16 @@ export function GameRoomPage() {
   const [isWaitingStart, setIsWaitingStart] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const currentUserIdRef = useRef(currentUserId);
+  const translateRef = useRef(t);
+
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  }, [currentUserId]);
+
+  useEffect(() => {
+    translateRef.current = t;
+  }, [t]);
 
   useEffect(() => {
     void getProfile()
@@ -96,9 +120,9 @@ export function GameRoomPage() {
     }
     void joinRoom(id)
       .then((roomData) => setRooms([roomData]))
-      .catch(() => setError(t("room.error.join")))
+      .catch(() => setError(translateRef.current("room.error.join")))
       .finally(() => setIsLoading(false));
-  }, [id, t]);
+  }, [id]);
 
   const room = useMemo(() => rooms.find((item) => item.id === id), [id, rooms]);
   const isCurrentUserConfirmed = room && currentUserId ? room.readyUserIds.includes(currentUserId) : false;
@@ -216,6 +240,7 @@ export function GameRoomPage() {
     }
     wsClient.connect(id);
     const offRoomUpdate = onWsEvent("room_update", ({ payload }) => {
+      const translate = translateRef.current;
       if (!payload || typeof payload !== "object") {
         return;
       }
@@ -241,7 +266,7 @@ export function GameRoomPage() {
           if (normalized.stakeConfirmDeadline) {
             const leftSec = Math.max(0, Math.ceil((normalized.stakeConfirmDeadline - Date.now()) / 1000));
             setInfoMessage(
-              t("room.stakeProgressLeft", {
+              translate("room.stakeProgressLeft", {
                 confirmed,
                 total: realPlayers,
                 seconds: leftSec,
@@ -249,7 +274,7 @@ export function GameRoomPage() {
             );
           } else {
             setInfoMessage(
-              t("room.stakeProgress", {
+              translate("room.stakeProgress", {
                 confirmed,
                 total: realPlayers,
               }),
@@ -260,8 +285,8 @@ export function GameRoomPage() {
       }
       if (normalized.readyPlayers && normalized.readyPlayers >= normalized.maxPlayers && !normalized.matchId) {
         const creatorId = normalized.playerIds?.[0];
-        const amCreator = creatorId === currentUserId;
-        setInfoMessage(amCreator ? t("room.readyAllCreator") : t("room.readyAllWaitCreator"));
+        const amCreator = creatorId === currentUserIdRef.current;
+        setInfoMessage(amCreator ? translate("room.readyAllCreator") : translate("room.readyAllWaitCreator"));
       }
     });
 
@@ -269,7 +294,7 @@ export function GameRoomPage() {
       offRoomUpdate();
       wsClient.disconnect();
     };
-  }, [currentUserId, id, navigate, t]);
+  }, [id, navigate]);
 
   useEffect(() => {
     if (!id || !isWaitingStart) {

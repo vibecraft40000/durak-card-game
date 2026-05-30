@@ -59,6 +59,10 @@ var (
 		Name: "game_reconnect_total",
 		Help: "Successful reconnects during active game.",
 	})
+	gameBotTakeoverTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "game_bot_takeover_total",
+		Help: "AFK players switched to bot/auto policy after disconnect grace.",
+	})
 	wsDisconnectTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "ws_disconnect_total",
 		Help: "WebSocket disconnections by reason.",
@@ -78,6 +82,27 @@ var (
 	timeoutAppliedTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "timeout_applied_total",
 		Help: "Turn timeouts auto-applied.",
+	})
+	wsStateSyncTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_state_sync_total",
+		Help: "State sync envelopes sent to clients by mode (replay|snapshot|noop).",
+	}, []string{"mode"})
+	wsReplayMovesSentTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "ws_replay_moves_sent_total",
+		Help: "Number of replayed move_applied events sent via reconnect sync.",
+	})
+	wsStateDiffTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "ws_state_diff_total",
+		Help: "Number of state_diff events sent to reconnecting clients.",
+	})
+	wsSyncPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ws_sync_payload_bytes",
+		Help:    "Payload size in bytes for sync-related websocket messages.",
+		Buckets: []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384},
+	}, []string{"type"})
+	wsSyncFinalStateSkippedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "ws_sync_final_state_skipped_total",
+		Help: "Number of reconnect syncs where final game_state was intentionally skipped.",
 	})
 )
 
@@ -121,6 +146,10 @@ func IncGameReconnect() {
 	gameReconnectTotal.Inc()
 }
 
+func IncGameBotTakeover() {
+	gameBotTakeoverTotal.Inc()
+}
+
 func IncWSDisconnect(reason string) {
 	wsDisconnectTotal.WithLabelValues(reason).Inc()
 }
@@ -139,6 +168,32 @@ func IncVersionMismatch() {
 
 func IncTimeoutApplied() {
 	timeoutAppliedTotal.Inc()
+}
+
+func IncWSStateSync(mode string) {
+	wsStateSyncTotal.WithLabelValues(mode).Inc()
+}
+
+func AddWSReplayMovesSent(count int) {
+	if count <= 0 {
+		return
+	}
+	wsReplayMovesSentTotal.Add(float64(count))
+}
+
+func IncWSStateDiff() {
+	wsStateDiffTotal.Inc()
+}
+
+func ObserveWSSyncPayloadBytes(payloadType string, size int) {
+	if size <= 0 {
+		return
+	}
+	wsSyncPayloadBytes.WithLabelValues(payloadType).Observe(float64(size))
+}
+
+func IncWSSyncFinalStateSkipped() {
+	wsSyncFinalStateSkippedTotal.Inc()
 }
 
 func HTTPMiddleware(next http.Handler) http.Handler {

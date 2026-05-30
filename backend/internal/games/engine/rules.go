@@ -13,19 +13,25 @@ var (
 	ErrCardDoesNotBeat    = errors.New("defense card does not beat attack card")
 	ErrAttackCardDenied   = errors.New("attack card rank not allowed")
 	ErrTranslateDenied    = errors.New("translate move is not allowed")
+	ErrThrowDenied        = errors.New("throw move is not allowed")
+	ErrShulerPlayDenied   = errors.New("shuler play is not allowed")
 	ErrCannotReportShuler = errors.New("cannot report shuler now")
 )
 
 type Action string
 
 const (
-	ActionAttack      Action = "attack"
-	ActionDefend      Action = "defend"
-	ActionTake        Action = "take"
-	ActionPass        Action = "pass"
-	ActionTranslate   Action = "translate"
+	ActionAttack       Action = "attack"
+	ActionDefend       Action = "defend"
+	ActionThrow        Action = "throw"
+	ActionTake         Action = "take"
+	ActionPass         Action = "pass"
+	ActionTranslate    Action = "translate"
+	ActionShulerPlay   Action = "shuler_play"
 	ActionShulerReport Action = "shuler_report"
 )
+
+const shulerReportWindow = 3 * time.Second
 
 func ApplyAction(state *GameState, playerID string, action Action, cardID string, turnTTL time.Duration) error {
 	if state.Status != StatusPlaying {
@@ -34,17 +40,42 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 	if state.Metadata == nil {
 		state.Metadata = map[string]interface{}{}
 	}
-	if action != ActionShulerReport && state.TurnPlayerID != playerID {
+	if action != ActionShulerReport && action != ActionThrow && state.TurnPlayerID != playerID {
 		return ErrInvalidTurn
 	}
+	resetTurnDeadline := true
+	now := time.Now().UTC()
 
 	switch action {
+	case ActionShulerPlay:
+		if !state.ShulerEnabled || state.ShulerDetected || state.ShulerPlayerID == "" || playerID != state.ShulerPlayerID {
+			return ErrShulerPlayDenied
+		}
+		if state.TurnState != TurnDefend || state.DefenderID != playerID || len(state.TableCards)%2 == 0 || len(state.TableCards) == 0 {
+			return ErrShulerPlayDenied
+		}
+		hand := state.Hands[playerID]
+		card, ok := popCard(&hand, cardID)
+		if !ok {
+			return ErrCardMissing
+		}
+		state.Hands[playerID] = hand
+		state.TableCards = append(state.TableCards, card)
+		state.TurnState = TurnAttack
+		state.TurnPlayerID = state.AttackerID
+		state.ShulerWindowUntil = now.Add(shulerReportWindow)
+		state.Metadata["shuler_play_by"] = playerID
 	case ActionShulerReport:
 		if !state.ShulerEnabled || state.ShulerDetected || state.ShulerPlayerID == "" || playerID == state.ShulerPlayerID {
 			return ErrCannotReportShuler
 		}
+		if state.ShulerWindowUntil.IsZero() || now.After(state.ShulerWindowUntil) {
+			return ErrCannotReportShuler
+		}
 		state.ShulerDetected = true
+		state.ShulerWindowUntil = time.Time{}
 		state.Metadata["shuler_reported_by"] = playerID
+		resetTurnDeadline = false
 	case ActionAttack:
 		if state.TurnState != TurnAttack || state.AttackerID != playerID {
 			return ErrInvalidTurn
@@ -104,6 +135,31 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 		state.TurnState = TurnDefend
 		state.TurnPlayerID = nextDefender
 		state.Metadata["round_limit"] = len(state.Hands[nextDefender])
+	case ActionThrow:
+		if state.TurnState != TurnAttack || len(state.TableCards) == 0 || len(state.TableCards)%2 != 0 {
+			return ErrThrowDenied
+		}
+		if playerID == state.DefenderID || playerID == state.AttackerID {
+			return ErrThrowDenied
+		}
+		if !slices.Contains(state.PlayerOrder, playerID) || isEliminated(state, playerID) {
+			return ErrThrowDenied
+		}
+		if !canThrowCard(state, playerID, cardID) {
+			return ErrThrowDenied
+		}
+		if roundAttackCount(state) >= roundLimit(state) {
+			return ErrInvalidMove
+		}
+		hand := state.Hands[playerID]
+		card, ok := popCard(&hand, cardID)
+		if !ok {
+			return ErrCardMissing
+		}
+		state.Hands[playerID] = hand
+		state.TableCards = append(state.TableCards, card)
+		state.TurnState = TurnDefend
+		state.TurnPlayerID = state.DefenderID
 	case ActionTake:
 		if state.TurnState != TurnDefend || state.DefenderID != playerID {
 			return ErrInvalidTurn
@@ -127,10 +183,10 @@ func ApplyAction(state *GameState, playerID string, action Action, cardID string
 
 	maybeFinish(state)
 	state.Version++
-	if state.Status == StatusPlaying {
-		state.TurnEndsAt = time.Now().Add(turnTTL).UTC()
+	if state.Status == StatusPlaying && resetTurnDeadline {
+		state.TurnEndsAt = now.Add(turnTTL)
 	}
-	state.LastActionAt = time.Now().UTC()
+	state.LastActionAt = now
 	return nil
 }
 
@@ -349,10 +405,27 @@ func canAttackCard(state *GameState, cardID string) bool {
 	return false
 }
 
-func beatsForState(state *GameState, attack Card, defend Card, defenderID string) bool {
-	if state.ShulerEnabled && !state.ShulerDetected && state.ShulerPlayerID != "" && defenderID == state.ShulerPlayerID {
-		return true
+func canThrowCard(state *GameState, playerID, cardID string) bool {
+	hand := state.Hands[playerID]
+	var selected *Card
+	for i := range hand {
+		if hand[i].ID == cardID {
+			selected = &hand[i]
+			break
+		}
 	}
+	if selected == nil {
+		return false
+	}
+	for _, tableCard := range state.TableCards {
+		if tableCard.Rank == selected.Rank {
+			return true
+		}
+	}
+	return false
+}
+
+func beatsForState(state *GameState, attack Card, defend Card, defenderID string) bool {
 	return beats(attack, defend, state.Trump)
 }
 

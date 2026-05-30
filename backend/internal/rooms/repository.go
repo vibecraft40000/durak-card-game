@@ -128,6 +128,8 @@ func (r *Repository) Save(ctx context.Context, room Room) error {
 		metrics.ObserveRedisLatency("srem_rooms_active", startSRem)
 		_ = r.ClearReadySet(ctx, room.ID)
 		_ = r.ClearStakeConfirmedSet(ctx, room.ID)
+		_ = r.ClearPendingStartMatchID(ctx, room.ID)
+		_ = r.ReleaseStartLock(ctx, room.ID)
 	}
 	start := time.Now()
 	if err := r.redis.Set(ctx, roomKey(room.ID), raw, ttl).Err(); err != nil {
@@ -148,6 +150,14 @@ func readyKey(roomID string) string {
 
 func stakeConfirmKey(roomID string) string {
 	return "room:" + roomID + ":stake_confirmed"
+}
+
+func pendingStartMatchKey(roomID string) string {
+	return "room:" + roomID + ":pending_match_id"
+}
+
+func startLockKey(roomID string) string {
+	return "room:" + roomID + ":starting"
 }
 
 // AddReadyUser atomically adds user to ready set. Prevents lost update race.
@@ -220,8 +230,45 @@ func (r *Repository) ClearStakeConfirmedSet(ctx context.Context, roomID string) 
 	return r.redis.Del(ctx, key).Err()
 }
 
+func (r *Repository) GetPendingStartMatchID(ctx context.Context, roomID string) (string, error) {
+	start := time.Now()
+	value, err := r.redis.Get(ctx, pendingStartMatchKey(roomID)).Result()
+	metrics.ObserveRedisLatency("get_pending_start_match_id", start)
+	if err == redis.Nil {
+		return "", nil
+	}
+	return value, err
+}
+
+func (r *Repository) GetOrCreatePendingStartMatchID(ctx context.Context, roomID string) (string, error) {
+	if existing, err := r.GetPendingStartMatchID(ctx, roomID); err != nil || existing != "" {
+		return existing, err
+	}
+	candidate := uuid.NewString()
+	start := time.Now()
+	ok, err := r.redis.SetNX(ctx, pendingStartMatchKey(roomID), candidate, roomTTLActive).Result()
+	metrics.ObserveRedisLatency("setnx_pending_start_match_id", start)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return candidate, nil
+	}
+	return r.GetPendingStartMatchID(ctx, roomID)
+}
+
+func (r *Repository) ClearPendingStartMatchID(ctx context.Context, roomID string) error {
+	return r.redis.Del(ctx, pendingStartMatchKey(roomID)).Err()
+}
+
+func (r *Repository) HasStartLock(ctx context.Context, roomID string) (bool, error) {
+	start := time.Now()
+	count, err := r.redis.Exists(ctx, startLockKey(roomID)).Result()
+	metrics.ObserveRedisLatency("exists_room_start_lock", start)
+	return count > 0, err
+}
+
 // ReleaseStartLock removes the start lock (call on HoldBet/StartMatch failure so room can retry).
 func (r *Repository) ReleaseStartLock(ctx context.Context, roomID string) error {
-	key := "room:" + roomID + ":starting"
-	return r.redis.Del(ctx, key).Err()
+	return r.redis.Del(ctx, startLockKey(roomID)).Err()
 }

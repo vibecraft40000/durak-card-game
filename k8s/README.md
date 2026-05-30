@@ -1,5 +1,7 @@
 # Kubernetes Manifests
 
+> Status: secondary/experimental path. These manifests are not the canonical deployment path for this repository and currently cover only the API layer; see `docs/deployment-paths.md`.
+
 Deploy after Race safety tests pass. Requires Postgres and Redis (external or in-cluster).
 
 ## Apply order

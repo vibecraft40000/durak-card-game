@@ -3,7 +3,9 @@ import { httpRequest } from "@/shared/api/http";
 export type HistoryItem = {
   matchId: string;
   stake: number;
+  /** Gross payout credited in settlement, if any. */
   payout: number;
+  /** Net result after stake and commission; preferred for UI. */
   profit: number;
   result: "win" | "loss";
   createdAt: string;

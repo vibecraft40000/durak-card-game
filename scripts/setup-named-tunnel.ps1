@@ -1,10 +1,10 @@
-# Cloudflare Named Tunnel - durakonline.duckdns.org
-# Перед запуском: cloudflared tunnel login (выбери durakonline.duckdns.org)
+# Cloudflare Named Tunnel
+# Перед запуском: cloudflared tunnel login
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $tunnelName = "durakonline"
-$domain = "durakonline.duckdns.org"
+$domain = "your-domain.example"
 
 Set-Location $root
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"slices"
 	"strings"
@@ -14,8 +15,6 @@ import (
 	"durakonline/backend/internal/games/engine"
 	"durakonline/backend/internal/wallet"
 	"durakonline/backend/pkg/metrics"
-
-	"github.com/google/uuid"
 )
 
 var (
@@ -28,9 +27,11 @@ var (
 	ErrStakeConfirmRequired = errors.New("stake confirmation is required")
 	ErrStakeConfirmExpired  = errors.New("stake confirmation expired")
 	ErrNotRoomParticipant   = errors.New("only room participants can confirm stake")
+	ErrInvalidStake         = errors.New("stake must be greater than 0 and at most 500 USD")
 )
 
 const stakeConfirmTimeout = 2 * time.Minute
+const maxRoomStakeUSD = 500.0
 
 type Service struct {
 	repo          *Repository
@@ -55,6 +56,9 @@ func (s *Service) List(ctx context.Context) ([]Room, error) {
 }
 
 func (s *Service) Create(ctx context.Context, title string, stake float64, maxPlayers int, deck int, mode string, ownerID string) (Room, error) {
+	if err := validateStake(stake); err != nil {
+		return Room{}, err
+	}
 	room := Room{
 		Title:      title,
 		Stake:      stake,
@@ -179,6 +183,9 @@ func (s *Service) ConfirmStake(ctx context.Context, roomID string, userID string
 		if !ok {
 			return Room{}, ErrRoomNotFound
 		}
+		if room.Status == StatusInGame && room.MatchID != "" && slices.Contains(room.Players, userID) {
+			return room, nil
+		}
 		if room.Status != StatusAwaitingStakeConfirm {
 			return room, ErrStakeConfirmRequired
 		}
@@ -234,8 +241,11 @@ func (s *Service) beginStakeConfirmationLocked(ctx context.Context, room Room) (
 }
 
 func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error) {
+	if err := validateStake(room.Stake); err != nil {
+		return Room{}, err
+	}
 	log.Printf("[start] entering room=%s", room.ID)
-	startKey := "room:" + room.ID + ":starting"
+	startKey := startLockKey(room.ID)
 	ok, err := s.repo.redis.SetNX(ctx, startKey, "1", 10*time.Second).Result()
 	if err != nil || !ok {
 		log.Printf("[start] SetNX failed room=%s err=%v ok=%v", room.ID, err, ok)
@@ -245,11 +255,14 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 		}
 		return Room{}, ErrStartInProgress
 	}
+	matchID, err := s.repo.GetOrCreatePendingStartMatchID(ctx, room.ID)
+	if err != nil {
+		_ = s.repo.ReleaseStartLock(ctx, room.ID)
+		return Room{}, err
+	}
 	room.Status = StatusConfirmed
-	matchID := uuid.NewString()
-	heldPlayers := make([]string, 0, len(room.Players))
 	rollbackHolds := func() {
-		for _, playerID := range heldPlayers {
+		for _, playerID := range s.realPlayers(room) {
 			if err := s.wallet.RollbackHoldBet(ctx, playerID, matchID); err != nil {
 				log.Printf("[start] rollback hold failed room=%s match=%s player=%s err=%v", room.ID, matchID, playerID, err)
 			}
@@ -263,11 +276,11 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 			if err := s.wallet.HoldBet(ctx, playerID, matchID, room.Stake); err != nil {
 				log.Printf("[start] HoldBet failed room=%s player=%s err=%v", room.ID, playerID, err)
 				rollbackHolds()
+				_ = s.repo.ClearPendingStartMatchID(ctx, room.ID)
 				_ = s.repo.ReleaseStartLock(ctx, room.ID)
 				_ = s.repo.ClearReadySet(ctx, room.ID)
 				return Room{}, err
 			}
-			heldPlayers = append(heldPlayers, playerID)
 		}
 	}
 	cfg := engine.GameConfig{
@@ -277,6 +290,7 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 	if _, err := s.games.StartMatchWithConfig(ctx, matchID, room.Stake, cfg, room.Players); err != nil {
 		log.Printf("[start] StartMatch failed room=%s match=%s err=%v", room.ID, matchID, err)
 		rollbackHolds()
+		_ = s.repo.ClearPendingStartMatchID(ctx, room.ID)
 		_ = s.repo.ReleaseStartLock(ctx, room.ID)
 		_ = s.repo.ClearReadySet(ctx, room.ID)
 		return Room{}, err
@@ -288,6 +302,8 @@ func (s *Service) startMatchLocked(ctx context.Context, room Room) (Room, error)
 	if err := s.repo.Save(ctx, room); err != nil {
 		return Room{}, fmt.Errorf("save room: %w", err)
 	}
+	_ = s.repo.ClearPendingStartMatchID(ctx, room.ID)
+	_ = s.repo.ReleaseStartLock(ctx, room.ID)
 	_ = s.repo.ClearReadySet(ctx, room.ID)
 	_ = s.repo.ClearStakeConfirmedSet(ctx, room.ID)
 	log.Printf("[start] match created room=%s match=%s", room.ID, matchID)
@@ -443,6 +459,79 @@ func (s *Service) CancelExpiredStakeConfirmations(ctx context.Context) []Room {
 	return out
 }
 
+// ReconcilePendingStarts compensates orphaned holds for stale starts and restores
+// rooms if a crash happened between HoldBet and final room save.
+func (s *Service) ReconcilePendingStarts(ctx context.Context) int {
+	roomList, err := s.repo.List(ctx)
+	if err != nil {
+		return 0
+	}
+	reconciled := 0
+	for _, room := range roomList {
+		pendingMatchID, err := s.repo.GetPendingStartMatchID(ctx, room.ID)
+		if err != nil || pendingMatchID == "" {
+			continue
+		}
+		locked, err := s.repo.HasStartLock(ctx, room.ID)
+		if err != nil || locked {
+			continue
+		}
+		_, lockErr := s.withRoomLock(ctx, room.ID, func() (Room, error) {
+			current, ok := s.repo.Get(ctx, room.ID)
+			if !ok {
+				_ = s.repo.ClearPendingStartMatchID(ctx, room.ID)
+				return Room{}, ErrRoomNotFound
+			}
+			pendingMatchID, err := s.repo.GetPendingStartMatchID(ctx, current.ID)
+			if err != nil || pendingMatchID == "" {
+				return current, err
+			}
+			locked, err := s.repo.HasStartLock(ctx, current.ID)
+			if err != nil || locked {
+				return current, err
+			}
+
+			if _, err := s.games.GetState(ctx, pendingMatchID); err == nil {
+				current.MatchID = pendingMatchID
+				current.Status = StatusInGame
+				current.StakeConfirmDeadline = 0
+				current.StakeConfirmedUsers = nil
+				if err := s.repo.Save(ctx, current); err != nil {
+					return Room{}, fmt.Errorf("save room: %w", err)
+				}
+				_ = s.repo.ClearReadySet(ctx, current.ID)
+				_ = s.repo.ClearStakeConfirmedSet(ctx, current.ID)
+				_ = s.repo.ClearPendingStartMatchID(ctx, current.ID)
+				reconciled++
+				return current, nil
+			} else if !errors.Is(err, games.ErrMatchNotFound) {
+				return current, err
+			}
+
+			if !s.disableMoney {
+				for _, playerID := range s.realPlayers(current) {
+					if err := s.wallet.RollbackHoldBet(ctx, playerID, pendingMatchID); err != nil {
+						return current, err
+					}
+				}
+			}
+			_ = s.repo.ClearPendingStartMatchID(ctx, current.ID)
+			if current.MatchID != "" {
+				current.MatchID = ""
+				if err := s.repo.Save(ctx, current); err != nil {
+					return Room{}, fmt.Errorf("save room: %w", err)
+				}
+			}
+			reconciled++
+			return current, nil
+		})
+		if lockErr != nil {
+			continue
+		}
+	}
+	return reconciled
+}
+
 func (s *Service) requiresStakeConfirmation(room Room) bool {
 	if s.disableMoney {
 		return false
@@ -524,10 +613,23 @@ func shouldAutofillWithBot(room Room) bool {
 	return room.MaxPlayers == 1 || strings.EqualFold(room.Mode, "bot")
 }
 
+func validateStake(stake float64) error {
+	switch {
+	case math.IsNaN(stake), math.IsInf(stake, 0):
+		return ErrInvalidStake
+	case stake <= 0:
+		return ErrInvalidStake
+	case stake > maxRoomStakeUSD:
+		return ErrInvalidStake
+	default:
+		return nil
+	}
+}
+
 var errRoomLocked = errors.New("room is locked")
 
 func (s *Service) withRoomLock(ctx context.Context, roomID string, fn func() (Room, error)) (Room, error) {
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := 0; attempt < 80; attempt++ {
 		release, err := s.acquireRedisLock(ctx, roomID)
 		if err != nil {
 			if errors.Is(err, errRoomLocked) {

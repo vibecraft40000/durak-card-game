@@ -1,0 +1,2 @@
+-- Enum value transaction_type.bet_hold_release is intentionally kept to avoid
+-- unsafe ALTER TYPE rewrites in down migrations.

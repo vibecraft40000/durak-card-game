@@ -1,12 +1,12 @@
-# Локальная разработка: только Postgres, Redis и миграции.
-# API и фронт запускаете на хосте: go run ./cmd/api и npm run dev.
+# Local development: Postgres, Redis and migrations only.
+# Run API and frontend on host: go run ./cmd/api and npm run dev.
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_DB: durak
       POSTGRES_USER: durak
-      POSTGRES_PASSWORD: durak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-durak}
     ports:
       - "5432:5432"
     volumes:
@@ -32,7 +32,7 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database", "postgres://durak:durak@postgres:5432/durak?sslmode=disable",
+        "-database", "postgres://durak:${POSTGRES_PASSWORD:-durak}@postgres:5432/durak?sslmode=disable",
         "up",
       ]
     volumes:

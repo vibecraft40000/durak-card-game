@@ -1,12 +1,12 @@
 #!/bin/sh
 # Run on VPS: cd /root/durakonline && sh scripts/setup-duckdns-ssl.sh
-# Prerequisites: durakonline.duckdns.org -> server IP, ports 80 and 443 open
+# Prerequisites: your-domain.example -> server IP, ports 80 and 443 open
 
 set -e
 cd "$(dirname "$0")/.."
-DOMAIN="durakonline.duckdns.org"
+DOMAIN="your-domain.example"
 
-echo "=== Durak Online: DuckDNS + Let's Encrypt ==="
+echo "=== DuckDNS + Let's Encrypt ==="
 echo "Domain: $DOMAIN"
 echo ""
 

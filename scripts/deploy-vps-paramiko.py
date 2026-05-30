@@ -12,11 +12,15 @@ except ImportError:
     print("Install paramiko: pip install paramiko")
     sys.exit(1)
 
-VPS_HOST = "72.56.74.7"
-VPS_USER = "root"
-VPS_PASSWORD = "azfzD1V+*gkevz"
+VPS_HOST = "YOUR_SERVER_IP"
+VPS_USER = os.environ.get("VPS_USER", "root")
+VPS_PASSWORD = os.environ.get("VPS_PASSWORD", "").strip()
 REMOTE_PATH = "/root/durakonline"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if not VPS_PASSWORD:
+    print("VPS_PASSWORD is required. The previously hardcoded VPS credential was removed from the repo and must be rotated out of band before reuse.")
+    sys.exit(1)
 
 
 def ignore_dir(name):
@@ -105,7 +109,7 @@ def main():
     if code != 0:
         print("Docker compose exit code:", code)
         sys.exit(1)
-    print("Done. App: https://72-56-74-7.sslip.io/", flush=True)
+    print("Done. App: https://your-server-ip.sslip.io/", flush=True)
     return 0
 
 

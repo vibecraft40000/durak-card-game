@@ -46,37 +46,38 @@ const (
 )
 
 type GameState struct {
-	MatchID      string                 `json:"match_id"`
-	Status       GameStatus             `json:"status"`
-	Version      int64                  `json:"version"`
-	Deck         []Card                 `json:"deck"`
-	Trump        Suit                   `json:"trump"`
-	AttackerID   string                 `json:"attacker"`
-	DefenderID   string                 `json:"defender"`
-	TableCards   []Card                 `json:"table_cards"`
-	Hands        map[string][]Card      `json:"hands"`
-	TurnState    TurnState              `json:"turn_state"`
-	TurnPlayerID string                 `json:"turn_player_id"`
-	TurnEndsAt   time.Time              `json:"turn_ends_at"`
-	WinnerPlayer string                 `json:"winner_player_id,omitempty"`
-	WinnerPlayers []string              `json:"winner_player_ids,omitempty"`
-	IsDraw       bool                   `json:"is_draw,omitempty"`
-	FinishGroups [][]string             `json:"finish_groups,omitempty"`
-	PlayerOrder  []string               `json:"player_order"`
-	Mode         string                 `json:"mode,omitempty"`
-	DeckType     int                    `json:"deck_type,omitempty"`
-	ShulerEnabled bool                  `json:"shuler_enabled,omitempty"`
-	ShulerPlayerID string               `json:"shuler_player_id,omitempty"`
-	ShulerDetected bool                 `json:"shuler_detected,omitempty"`
-	LastActionAt time.Time              `json:"last_action_at"`
-	StartedAt    time.Time              `json:"started_at"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	MatchID           string                 `json:"match_id"`
+	Status            GameStatus             `json:"status"`
+	Version           int64                  `json:"version"`
+	Deck              []Card                 `json:"deck"`
+	Trump             Suit                   `json:"trump"`
+	AttackerID        string                 `json:"attacker"`
+	DefenderID        string                 `json:"defender"`
+	TableCards        []Card                 `json:"table_cards"`
+	Hands             map[string][]Card      `json:"hands"`
+	TurnState         TurnState              `json:"turn_state"`
+	TurnPlayerID      string                 `json:"turn_player_id"`
+	TurnEndsAt        time.Time              `json:"turn_ends_at"`
+	WinnerPlayer      string                 `json:"winner_player_id,omitempty"`
+	WinnerPlayers     []string               `json:"winner_player_ids,omitempty"`
+	IsDraw            bool                   `json:"is_draw,omitempty"`
+	FinishGroups      [][]string             `json:"finish_groups,omitempty"`
+	PlayerOrder       []string               `json:"player_order"`
+	Mode              string                 `json:"mode,omitempty"`
+	DeckType          int                    `json:"deck_type,omitempty"`
+	ShulerEnabled     bool                   `json:"shuler_enabled,omitempty"`
+	ShulerPlayerID    string                 `json:"shuler_player_id,omitempty"`
+	ShulerDetected    bool                   `json:"shuler_detected,omitempty"`
+	ShulerWindowUntil time.Time              `json:"shuler_window_until,omitempty"`
+	LastActionAt      time.Time              `json:"last_action_at"`
+	StartedAt         time.Time              `json:"started_at"`
+	Metadata          map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type GameConfig struct {
-	DeckSize      int
-	Mode          string
-	ShulerEnabled bool
+	DeckSize       int
+	Mode           string
+	ShulerEnabled  bool
 	ShulerPlayerID string
 }
 
@@ -139,26 +140,26 @@ func newGameStateWithSource(matchID string, players []string, turnTTL time.Durat
 	}
 
 	return GameState{
-		MatchID:      matchID,
-		Status:       StatusPlaying,
-		Version:      1,
-		Deck:         deck,
-		StartedAt:    now,
-		Trump:        trump,
-		AttackerID:   attacker,
-		DefenderID:   defender,
-		TableCards:   []Card{},
-		Hands:        hands,
-		TurnState:    TurnAttack,
-		TurnPlayerID: attacker,
-		TurnEndsAt:   time.Now().Add(turnTTL).UTC(),
-		PlayerOrder:  slices.Clone(players),
-		Mode:         mode,
-		DeckType:     deckType,
-		ShulerEnabled: shulerEnabled,
+		MatchID:        matchID,
+		Status:         StatusPlaying,
+		Version:        1,
+		Deck:           deck,
+		StartedAt:      now,
+		Trump:          trump,
+		AttackerID:     attacker,
+		DefenderID:     defender,
+		TableCards:     []Card{},
+		Hands:          hands,
+		TurnState:      TurnAttack,
+		TurnPlayerID:   attacker,
+		TurnEndsAt:     time.Now().Add(turnTTL).UTC(),
+		PlayerOrder:    slices.Clone(players),
+		Mode:           mode,
+		DeckType:       deckType,
+		ShulerEnabled:  shulerEnabled,
 		ShulerPlayerID: shulerPlayerID,
 		ShulerDetected: false,
-		LastActionAt: now,
+		LastActionAt:   now,
 		Metadata: map[string]interface{}{
 			"round_limit": len(hands[defender]),
 		},
